@@ -1,0 +1,25 @@
+{
+  "name": "monopoly-3d",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "sim": "node test/simulate.mjs",
+    "smoke": "node test/smoke.mjs",
+    "server": "node server/server.mjs",
+    "net-sim": "node test/net-sim.mjs",
+    "net-web": "node test/net-web.mjs",
+    "balance": "node test/balance.mjs"
+  },
+  "dependencies": {
+    "three": "^0.182.0",
+    "ws": "^8.21.1"
+  },
+  "devDependencies": {
+    "playwright": "^1.61.1",
+    "vite": "^7.3.4"
+  }
+}

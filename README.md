@@ -1,0 +1,77 @@
+# 商业帝国 3D · AI 大富翁（Monopoly 3D AI）
+
+基于 **Three.js** 的 3D 大富翁游戏：现代商业题材、**DeepSeek 大模型驱动的 AI 对手**、**2~34 人**同屏、**回合制联机对战**、卡牌玩法、行业景气、银行贷款与抵押、创办公司。
+
+![棋盘](docs/images/board.png)
+
+## ✨ 特性
+
+- **3D 棋盘**：40 格现代商业棋盘（大模型实验室、算力中心、晶圆工厂…），摩天楼随等级长高、公司总部大楼、6 种棋子造型、真实 3D 骰子（1/4 红点中式传统）、智能跟随镜头
+- **DeepSeek AI 对手**：AI 有人格（风控总监/赌徒/科技新贵/老江湖/萌新），会**对话聊天**、购地决策、**交易谈判（可拒绝/还价）**；未配置 Key 时自动回退本地策略与台词
+- **卡牌玩法**：遥控骰子/加速卡/免租卡/拆迁卡/均富卡/抢夺卡/换地卡/冬眠卡，回合内自由打出
+- **现代经济系统**：8 大行业景气度（低迷/平稳/向好/火爆）影响租金与营收、行业新闻事件、银行贷款（利滚利）、地产抵押赎回、创办并升级公司
+- **2~34 人同屏**：本地热座 + AI 混编，大人数自动紧凑布局
+- **回合制联机**：WebSocket 权威服务器 + 房间制（4 位房号），2~34 人，掉线 AI 托管
+- **单机自动存档**：刷新页面不丢进度，随时继续对局
+- **程序化音效**：纯 WebAudio 合成，零音频资源
+
+![对局](docs/images/gameplay.png)
+
+## 🚀 快速开始
+
+```bash
+npm install
+npm run dev        # 单机/热座：http://localhost:5173
+```
+
+联机对战（回合制）：
+
+```bash
+npm run server     # 终端1：对战服务器（默认 :8081）
+npm run dev        # 终端2：游戏页面 → 开始界面点「🌐 联机对战」
+```
+
+创建房间得到 4 位房号，好友输入房号加入（局域网填房主 IP）。
+
+![联机大厅](docs/images/online-lobby.png)
+
+## 🤖 接入 DeepSeek
+
+游戏内右上角「⚙️ AI」填入 [DeepSeek API Key](https://platform.deepseek.com/)（仅存本机 localStorage，直发官方接口；开发服务器已内置 `/ds` 代理规避 CORS），AI 即刻获得真·对话与谈判能力。支持 `deepseek-chat` / `deepseek-reasoner`。
+
+## 🃏 卡牌
+
+![卡牌](docs/images/card-play.png)
+
+## 🏗️ 技术架构
+
+```
+src/
+├─ data/      棋盘/卡牌/行业/道具定义（纯数据）
+├─ core/      state.js 规则状态 + engine.js 回合引擎（纯逻辑，无 DOM/Three 依赖）
+├─ llm/       DeepSeek 客户端 + AI 人格大脑（决策/谈判/闲聊，含本地回退）
+├─ three/     world.js 3D 世界（棋盘/棋子/摩天楼/总部/骰子/智能镜头）
+├─ ui/        ui.js HUD/弹窗/银行/交易/公司/聊天
+├─ net/       online.js 联机客户端
+├─ audio.js   WebAudio 程序化音效
+server/       server.mjs 联机权威服务器（房间制，复用 core 引擎）
+test/         无头仿真 / 参数平衡 / 浏览器冒烟 / 联机仿真 / 双浏览器 / 存档 / 视觉检查
+```
+
+规则引擎与表现层完全分离（引擎通过 adapter 注入表现层），同一引擎驱动单机、联机服务器与无头仿真。
+
+## 🧪 测试
+
+```bash
+npm run sim        # 300 局无头规则仿真（含 34 人局，不变量校验）
+npm run balance    # 27 组经济参数扫描（2700 局）
+npm run smoke      # 浏览器冒烟（Playwright）
+npm run net-sim    # 联机协议仿真
+npm run net-web    # 双浏览器联机对局
+```
+
+## 📄 开源协议
+
+[MIT](LICENSE) © hencter
+
+> 相关仓库：[monopoly-engine](https://github.com/hencter/monopoly-engine) —— 从本项目抽出的无头大富翁规则引擎与仿真器。

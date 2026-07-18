@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>商业帝国 3D · AI 大富翁</title>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <canvas id="scene"></canvas>
+
+  <!-- 玩家面板 -->
+  <div id="players" class="hidden"></div>
+
+  <!-- 行业景气条 -->
+  <div id="industries" class="hidden"></div>
+
+  <!-- 操作面板 -->
+  <div id="actions" class="hidden">
+    <div id="turn-info">准备中…</div>
+    <button id="btn-roll" class="primary big">🎲 掷骰子</button>
+    <div class="btn-grid" id="item-bar"></div>
+    <div class="btn-grid">
+      <button id="btn-build">🏠 建设</button>
+      <button id="btn-bank">🏦 银行</button>
+      <button id="btn-trade">🤝 交易</button>
+      <button id="btn-company">🏢 公司</button>
+      <button id="btn-camera">📷 跟随</button>
+      <button id="btn-settings">⚙️ AI</button>
+    </div>
+    <button id="btn-end">结束回合 ➜</button>
+  </div>
+
+  <!-- 聊天面板 -->
+  <div id="chat-wrap" class="hidden">
+    <div id="chat-log"></div>
+    <div id="chat-input-row">
+      <input id="chat-input" maxlength="50" placeholder="和 AI 对手聊聊…" />
+      <button id="chat-send">发送</button>
+    </div>
+  </div>
+
+  <!-- 日志 -->
+  <div id="log-wrap" class="hidden"><div id="log"></div></div>
+
+  <!-- 格子信息卡 -->
+  <div id="tile-info" class="hidden"></div>
+
+  <!-- 弹窗层 -->
+  <div id="modal" class="hidden"><div id="modal-box"></div></div>
+
+  <!-- 提示条 -->
+  <div id="toast" class="hidden"></div>
+
+  <!-- 开始界面 -->
+  <div id="start-screen">
+    <div class="start-card">
+      <h1>🌆 商业帝国 <span>3D</span></h1>
+      <p class="subtitle">2~34 人同屏 · DeepSeek AI 对手 · 行业战争 · 银行金融 · 创办公司</p>
+      <div id="continue-game" class="hidden">
+        <button id="btn-continue" class="primary big">🕒 继续上次对局</button>
+        <div class="continue-meta"><span id="continue-info"></span><a id="btn-delete-save" href="javascript:void 0">删除存档</a></div>
+        <div class="divider">或开新局</div>
+      </div>
+      <div id="quick-count"></div>
+      <div id="player-setup"></div>
+      <div class="setup-row">
+        <button id="btn-remove-player">－</button>
+        <span id="player-count-label">2 名玩家</span>
+        <button id="btn-add-player">＋</button>
+      </div>
+      <button id="btn-start" class="primary big">🎮 单机开局</button>
+      <button id="btn-online" class="big" style="margin-top:10px;">🌐 联机对战（回合制）</button>
+      <p class="hint">买地建楼收租 · 行业景气影响收益 · 银行贷款加杠杆 · 创办公司赚营收 · 卡牌改变战局<br/>拖拽旋转视角 · 滚轮缩放 · 点击格子看详情 · F 键镜头归位 · 空格掷骰 · M 键静音<br/>联机需先启动服务器：<code>npm run server</code></p>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
