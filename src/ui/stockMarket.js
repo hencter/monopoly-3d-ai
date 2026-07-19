@@ -15,12 +15,11 @@ import {
  * @param {{ tradeable?: boolean, readOnly?: boolean }} [opts]
  */
 export function openStockMarket(game, player, onChange, ui = {}, hooks = {}, opts = {}) {
-  const marketOpen = game.isMarketOpen?.() !== false && game.marketOpen !== false;
-  // 休市时强制只读成交
-  const tradeable = opts.tradeable !== false && opts.readOnly !== true && marketOpen;
+  const isOpen = () => game.isMarketOpen?.() !== false && game.marketOpen !== false;
+  const canTrade = () => opts.tradeable !== false && opts.readOnly !== true && isOpen();
 
   const maxBuyable = (key) => {
-    if (!tradeable || !player) return 0;
+    if (!canTrade() || !player) return 0;
     if (typeof game.maxBuyableShares === 'function') return game.maxBuyableShares(player, key);
     if (!game.canTradeStock?.(player, key)) return 0;
     const hold = game.ensureStocks(player)[key] || 0;
@@ -31,16 +30,16 @@ export function openStockMarket(game, player, onChange, ui = {}, hooks = {}, opt
     return Math.max(0, Math.min(room, mkt, Math.floor(player.money / price)));
   };
   const maxSellable = (key) => {
-    if (!tradeable || !player) return 0;
+    if (!canTrade() || !player) return 0;
     return game.ensureStocks(player)[key] || 0;
   };
   const maxShortOpen = (key) => {
-    if (!tradeable || !player) return 0;
+    if (!canTrade() || !player) return 0;
     if (typeof game.maxOpenShort === 'function') return game.maxOpenShort(player, key);
     return 0;
   };
   const maxShortCover = (key) => {
-    if (!tradeable || !player) return 0;
+    if (!canTrade() || !player) return 0;
     if (typeof game.maxCoverShort === 'function') return game.maxCoverShort(player, key);
     return game.ensureShorts?.(player)?.[key] || player.shorts?.[key] || 0;
   };
@@ -67,7 +66,7 @@ export function openStockMarket(game, player, onChange, ui = {}, hooks = {}, opt
   try { game.pruneNewsBoard?.(); } catch { /* */ }
 
   root.classList.remove('hidden');
-  root.classList.toggle('readonly', !tradeable);
+  root.classList.toggle('readonly', !canTrade());
   const charts = [];
   let newsTimer = null;
   let newsIdx = 0;
@@ -94,11 +93,11 @@ export function openStockMarket(game, player, onChange, ui = {}, hooks = {}, opt
     if (!cashEl) return;
     const meta = game.calendarMeta || {};
     const wd = meta.weekday ? `周${meta.weekday}` : '';
-    if (!marketOpen) {
+    if (!isOpen()) {
       cashEl.textContent = `🛑 休市 ${wd} · 现金 ${formatMoney(player?.money || 0)} · 不可买卖（周末）`;
       return;
     }
-    if (tradeable) {
+    if (canTrade()) {
       const gated = STOCK_INDUSTRIES.filter(k => !game.canTradeStock?.(player, k));
       const allGated = gated.length === STOCK_INDUSTRIES.length;
       const hasStocks = STOCK_INDUSTRIES.some(k => (game.ensureStocks?.(player)?.[k] || player.stocks?.[k] || 0) > 0);
@@ -122,12 +121,12 @@ export function openStockMarket(game, player, onChange, ui = {}, hooks = {}, opt
     if (head) head.insertAdjacentElement('afterend', banner);
     else root.prepend(banner);
   }
-  if (!marketOpen) {
+  if (!isOpen()) {
     const wd = game.calendarMeta?.weekday || '末';
     banner.textContent = `🛑 股市休市（周${wd}）· 全员轮完 = 过 1 天 · 周一～五开市 · 仅可浏览行情`;
     banner.classList.remove('hidden');
     root.classList.add('market-closed');
-  } else if (tradeable) {
+  } else if (canTrade()) {
     const gated = STOCK_INDUSTRIES.filter(k => !game.canTradeStock?.(player, k));
     const hasStocks = STOCK_INDUSTRIES.some(k => (game.ensureStocks?.(player)?.[k] || player.stocks?.[k] || 0) > 0);
     if (gated.length === STOCK_INDUSTRIES.length && !hasStocks) {
@@ -391,10 +390,10 @@ export function openStockMarket(game, player, onChange, ui = {}, hooks = {}, opt
       const maxS = maxSellable(key);
       const maxSO = maxShortOpen(key);
       const maxSC = maxShortCover(key);
-      const canBuy = tradeable && maxB > 0 && game.canBuyStock?.(player, key, 1);
-      const canSell = tradeable && maxS > 0;
-      const canShort = tradeable && maxSO > 0;
-      const canCover = tradeable && maxSC > 0;
+      const canBuy = canTrade() && maxB > 0 && game.canBuyStock?.(player, key, 1);
+      const canSell = canTrade() && maxS > 0;
+      const canShort = canTrade() && maxSO > 0;
+      const canCover = canTrade() && maxSC > 0;
       const gate = player ? !!game.canTradeStock?.(player, key) : false;
       let kdata = [];
       try { kdata = game.getKline?.(key) || []; } catch { kdata = game.kline?.[key] || []; }
@@ -425,7 +424,7 @@ export function openStockMarket(game, player, onChange, ui = {}, hooks = {}, opt
           <br/>
           我多 <b style="color:#9fd4ff">${hold}</b>/${MAX_SHARES_PER_IND}
           · 我空 <b style="color:#ff8a80">${shortN}</b>/${MAX_SHORT_PER_IND}
-          ${tradeable
+          ${canTrade()
             ? (gate
               ? ` · 可买 <b style="color:#7dffa0">${maxB}</b> · 可空 <b style="color:#ffb060">${maxSO}</b>`
               : ' · <span style="color:#e67e22">需持有该行业未抵押地产才可交易/做空</span>')
@@ -435,7 +434,7 @@ export function openStockMarket(game, player, onChange, ui = {}, hooks = {}, opt
           <span class="hl">多头</span>
           ${holdersHtml(key)}
         </div>
-        ${tradeable ? `
+        ${canTrade() ? `
         <div class="stock-card-qty">
           <span class="qty-label">手数</span>
           <div class="qty-stepper">
@@ -468,7 +467,7 @@ export function openStockMarket(game, player, onChange, ui = {}, hooks = {}, opt
         });
       });
 
-      if (!tradeable) continue;
+      if (!canTrade()) continue;
 
       const buyBtn = card.querySelector(`[data-buy="${key}"]`);
       const sellBtn = card.querySelector(`[data-sell="${key}"]`);
@@ -532,7 +531,7 @@ export function openStockMarket(game, player, onChange, ui = {}, hooks = {}, opt
       syncLabels();
     }
 
-    if (!tradeable) return;
+    if (!canTrade()) return;
 
     const readQty = (key) => {
       const card = grid.querySelector(`.stock-card[data-key="${key}"]`);
