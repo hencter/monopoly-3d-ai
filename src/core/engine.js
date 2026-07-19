@@ -4,6 +4,7 @@ import {
   GameState, TILES, JAIL_FINE, JAIL_INDEX, INDUSTRIES, INDUSTRY_STATES, ITEMS, STOCK_INDUSTRIES,
   formatMoney, ttc, GO_SALARY, GO_DRAW_N, PARKING_DRAW_N, BUY_LAND_DRAW_CHANCE, PAID_DRAW_COST,
   LOTTERY_COST, LOTTERY_JACKPOT, LOTTERY_WIN_CHANCE, HOSPITAL_FEE, DICE_COST,
+  STAMINA_MAX, STAMINA_DICE, STAMINA_BUY_LAND, STAMINA_BUILD,
 } from './state.js';
 
 const MAX_TURNS = 12000; // 34 人局单轮即 34 回合，需更高上限
@@ -190,6 +191,13 @@ export class Engine {
         this.a.log(`${this._tag(p)} 使用 🎯遥控骰子，指定点数 <b>${d1}</b>`, 'good');
         this.a.onItemCast?.(p, 'remote');
       } else {
+        // 体力检查
+        if ((p.stamina || 0) < STAMINA_DICE) {
+          this.a.log(`${this._tag(p)} 体力不足（${p.stamina || 0}/${STAMINA_MAX}），跳过回合`, 'muted');
+          this.a.phase('endTurn', p);
+          await this._endTurnWithBank(p);
+          return;
+        }
         // 掷骰费随回合递增
         if (action && action.type !== 'remote') {
           const round = Math.floor(this.g.turn / Math.max(1, this.g.alivePlayers().length));
@@ -198,6 +206,7 @@ export class Engine {
           if (dr.paid > 0) this.a.log(`${this._tag(p)} 支付掷骰费 ${formatMoney(dr.paid)}（第${round}轮）`, 'bad');
           if (dr.bankrupt) { this.a.log(`${this._tag(p)} 付不起掷骰费，破产！`, 'bad'); return; }
         }
+        p.stamina = Math.max(0, (p.stamina || 0) - STAMINA_DICE);
         boost = !!(action && action.boost);
         if (boost && !this.g.useItem(p, 'boost')) boost = false;
         else if (boost) this.a.onItemCast?.(p, 'boost');
@@ -468,6 +477,7 @@ export class Engine {
       const buy = await this.a.promptBuy(p, i);
       if (buy) {
         this.g.buyProperty(p, i);
+        p.stamina = Math.max(0, (p.stamina || 0) - STAMINA_BUY_LAND);
         this.a.log(`${this._tag(p)} 以 <span class="gold">${formatMoney(t.price)}</span> 收购 <b>${t.name}</b>！`, 'good');
         if (t.type === 'property' && t.color) {
           const boost = this.g.industryRentBoost(t.color, p.id);

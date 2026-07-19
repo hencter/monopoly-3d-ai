@@ -126,6 +126,12 @@ export const LOTTERY_WIN_CHANCE = 0.4;
 export const HOSPITAL_FEE = P(30);
 /** 掷骰费用（很贵，加速烧钱） */
 export const DICE_COST = P(5);
+/** 体力系统 */
+export const STAMINA_MAX = 100;
+export const STAMINA_REGEN = 30;
+export const STAMINA_DICE = 20;
+export const STAMINA_BUY_LAND = 15;
+export const STAMINA_BUILD = 15;
 
 export const TILES = [
   { type: 'go',       name: '创业起点' },

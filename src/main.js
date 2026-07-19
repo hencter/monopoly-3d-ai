@@ -188,7 +188,7 @@ class BrowserAdapter {
       const opSeconds = stopRent();
       return { type: 'roll', opSeconds };
     }
-    this.ui.setTurnInfo(`${p.name}：请掷骰子 · 点下方手牌使用道具 · ⏱️房租按秒计${p.money < ttc(100) ? ' · ⚠️资金告急！' : ''}`);
+    this.ui.setTurnInfo(`${p.name}：请掷骰子 · 点下方手牌使用道具 · ⏱️房租按秒计⚡${p.stamina || 100}${p.money < ttc(100) ? ' · ⚠️资金告急！' : ''}`);
     this.ui.setButtons({ roll: true, build: true, bank: true, trade: true, company: true, stock: true });
     if (p.money < ttc(100)) this.ui.toast('⚠️ 资金紧张！每轮掷骰费递增，尽快收租或借款', 3000);
     this._panelTarget = p;
