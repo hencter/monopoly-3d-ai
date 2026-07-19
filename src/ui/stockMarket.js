@@ -575,11 +575,12 @@ export function openStockMarket(game, player, onChange, ui = {}, hooks = {}, opt
       };
     });
     grid.querySelectorAll('[data-short]').forEach(btn => {
-      btn.onclick = () => {
+      btn.onclick = async () => {
         const key = btn.dataset.short;
         let n = readQty(key);
         n = Math.min(n, maxShortOpen(key));
         if (n <= 0) { ui.toast?.('无法做空（门槛/上限/已持多头）'); return; }
+        if (!confirm('⚠️ 做空需每回合付空头利息（Ŧ3万×手数×景气）。你确认要做空吗？')) return;
         if (hooks.openShort) {
           hooks.openShort(key, n);
           setTimeout(() => { if (!closed) renderGrid(); }, 80);

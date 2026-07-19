@@ -1,7 +1,7 @@
 // 回合引擎：驱动完整一局游戏。所有表现（动画/弹窗/日志）通过 adapter 注入，
 // 因此同一引擎既可用于浏览器（Three.js + DOM + DeepSeek），也可用于无头仿真测试。
 import {
-  GameState, TILES, JAIL_FINE, JAIL_INDEX, INDUSTRIES, INDUSTRY_STATES, ITEMS,
+  GameState, TILES, JAIL_FINE, JAIL_INDEX, INDUSTRIES, INDUSTRY_STATES, ITEMS, STOCK_INDUSTRIES,
   formatMoney, ttc, GO_SALARY, GO_DRAW_N, PARKING_DRAW_N, BUY_LAND_DRAW_CHANCE, PAID_DRAW_COST,
   LOTTERY_COST, LOTTERY_JACKPOT, LOTTERY_WIN_CHANCE, HOSPITAL_FEE,
 } from './state.js';

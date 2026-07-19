@@ -98,6 +98,7 @@ export class GameState {
       },
       freeDrawsLeft: FREE_DRAWS_PER_TURN,
       paidDrawsUsed: 0,
+      ledger: [],
     }));
     // 开局再抽 2 张补给（加权），起步就能用卡
     for (const p of this.players) {
@@ -205,10 +206,11 @@ export class GameState {
       to = ((to % TILES.length) + TILES.length) % TILES.length;
     }
     player.position = to;
-    if (passedGo) player.money += GO_SALARY;
+    if (passedGo) { player.money += GO_SALARY; this.recordTransaction(player, GO_SALARY, '经过起点融资'); }
     if (passedGo && player.doubleGo) {
       player.money += GO_SALARY;
       player.doubleGo = false;
+      this.recordTransaction(player, GO_SALARY, '双倍融资');
     }
     return { from, to, passedGo };
   }
@@ -216,7 +218,7 @@ export class GameState {
   moveTo(player, target, collectGo) {
     const from = player.position;
     player.position = target;
-    if (collectGo && target <= from) player.money += GO_SALARY; // 绕圈或直达起点
+    if (collectGo && target <= from) { player.money += GO_SALARY; this.recordTransaction(player, GO_SALARY, '经过起点融资'); }
     return { from, to: target };
   }
 
@@ -269,6 +271,7 @@ export class GameState {
   buyProperty(player, tileIdx) {
     const t = TILES[tileIdx];
     player.money -= t.price;
+    this.recordTransaction(player, -t.price, `收购${t.name}`);
     this.owner[tileIdx] = player.id;
     if (t.type === 'property' && STOCK_INDUSTRIES.includes(t.color)) this.onPropertyAcquired(t.color);
   }
@@ -787,6 +790,7 @@ export class GameState {
   buyHouse(player, tileIdx) {
     if (!this.canBuild(player, tileIdx)) return false;
     player.money -= TILES[tileIdx].houseCost;
+    this.recordTransaction(player, -TILES[tileIdx].houseCost, `建设${TILES[tileIdx].name}`);
     if (player.rushBuild) {
       player.rushBuild = false;
     } else {
@@ -804,7 +808,9 @@ export class GameState {
 
   sellHouse(player, tileIdx) {
     this.houses[tileIdx]--;
-    player.money += Math.floor(TILES[tileIdx].houseCost / 2);
+    const val = Math.floor(TILES[tileIdx].houseCost / 2);
+    player.money += val;
+    this.recordTransaction(player, val, `变卖${TILES[tileIdx].name}`);
   }
 
   playerProperties(playerId) {
@@ -869,6 +875,7 @@ export class GameState {
     if (!this.canBorrow(player, amount)) return false;
     player.debt += amount;
     player.money += amount;
+    this.recordTransaction(player, amount, '银行贷款');
     return true;
   }
 
@@ -877,6 +884,7 @@ export class GameState {
     if (real <= 0) return 0;
     player.debt -= real;
     player.money -= real;
+    this.recordTransaction(player, -real, '偿还贷款');
     return real;
   }
 
@@ -891,6 +899,7 @@ export class GameState {
   foundCompany(player, industry) {
     if (!this.canFoundCompany(player)) return false;
     player.money -= COMPANY_FOUND_COST;
+    this.recordTransaction(player, -COMPANY_FOUND_COST, `创办${INDUSTRIES[industry]?.name || industry}公司`);
     player.items.charter = (player.items.charter || 0) - 1;
     player.company = {
       industry,
@@ -914,6 +923,7 @@ export class GameState {
   upgradeCompany(player) {
     if (!this.canUpgradeCompany(player)) return false;
     player.money -= companyUpgradeCost(player.company.level);
+    this.recordTransaction(player, -companyUpgradeCost(player.company.level), `公司升级至Lv${player.company.level + 1}`);
     player.items.charter = (player.items.charter || 0) - 1;
     player.company.level++;
     return true;

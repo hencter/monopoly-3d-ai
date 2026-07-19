@@ -1,0 +1,33 @@
+// 已完成的记录点：
+// buyProperty ✓, moveSteps(GO) ✓
+
+// 待补的记录点列表（按行号）：
+// 221: player.money += GO_SALARY (collectGo)
+// 632: player.money -= cost (buyStock)
+// 649: player.money += gain (sellStock)
+// 711: player.money += gain (openShort)
+// 744: player.money -= cost (coverShort)
+// 792: player.money -= houseCost (buyHouse)
+// 810: player.money += floor(cost/2) (sellHouse)
+// 844: player.money += mortgageValue (mortgage)
+// 852: player.money -= unmortgageCost (unmortgage)
+// 874: player.money += amount (borrow)
+// 882: player.money -= real (repay)
+// 896: player.money -= COMPANY_FOUND_COST (foundCompany)
+// 919: player.money -= companyUpgradeCost (upgradeCompany)
+// 994: player.money += raised (IPO)
+// 1031/1036: investCompany
+// 1057: player.money += loan (pledge)
+// 1071: player.money -= pay (unpledge)
+// 1125: player.money += revenue (applyTurnStart)
+// 1132: player.money += equityDiv
+// 1136: player.money += stockDiv
+// 1139: player.money -= due (stockDiv neg)
+// 1243: player.money -= PAID_DRAW_COST (takeDraw paid)
+// 1287/1288: buyFromMarket
+// 1333: playRob
+// 1378: playSubsidy
+// 1384: playDebtCut
+// 1392: playAudit
+// 1444: playEqualize
+// 1472: playEqualizeDebt
