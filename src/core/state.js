@@ -1163,7 +1163,21 @@ export class GameState {
       interest = Math.ceil(player.debt * LOAN_INTEREST);
       player.debt += interest;
     }
-    return { revenue, interest, dividend: stockDiv + equityDiv, stockDiv, equityDiv };
+
+    // 地产维护费：每块地 Ŧ5万 + 每级建筑 Ŧ3万
+    let maint = 0;
+    for (const i of this.playerProperties(player.id)) {
+      maint += ttc(5);
+      if (this.houses[i] > 0) maint += this.houses[i] * ttc(3);
+    }
+    if (maint > 0 && player.money >= maint) {
+      player.money -= maint;
+    } else if (maint > 0) {
+      const r = this.forcePay(player, maint, null);
+      if (r.bankrupt) return { revenue, interest, dividend: stockDiv + equityDiv, stockDiv, equityDiv, maint };
+    }
+
+    return { revenue, interest, dividend: stockDiv + equityDiv, stockDiv, equityDiv, maint };
   }
 
   // ---------- 道具 / 抽牌系统 ----------

@@ -109,7 +109,7 @@ export class Engine {
 
   async playTurn(p) {
     // 回合开始：公司营收 + 股票/入股分红 + 贷款利息 + 监管抽查
-    const { revenue, interest, dividend, stockDiv, equityDiv } = this.g.applyTurnStart(p);
+    const { revenue, interest, dividend, stockDiv, equityDiv, maint } = this.g.applyTurnStart(p);
     if (revenue > 0) this.a.log(`${this._tag(p)} 的公司营收 <span class="gold">+${formatMoney(revenue)}</span>（余额 ${formatMoney(p.money)}）`, 'good');
     if (equityDiv > 0) this.a.log(`${this._tag(p)} 的入股股息 <span class="gold">+${formatMoney(equityDiv)}</span>（余额 ${formatMoney(p.money)}）`, 'good');
     if (stockDiv > 0) this.a.log(`${this._tag(p)} 的行业股分红 <span class="gold">+${formatMoney(stockDiv)}</span>（余额 ${formatMoney(p.money)}）`, 'good');
@@ -119,6 +119,7 @@ export class Engine {
       this.a.log(`${this._tag(p)} 的行业股付息 <span class="bad">${formatMoney(stockDiv)}</span>（余额 ${formatMoney(p.money)}）${detail ? ` · 空头：${detail}` : ''}`, 'bad');
     }
     if (interest > 0) this.a.log(`${this._tag(p)} 的贷款计息 ${formatMoney(interest)}（当前债务 ${formatMoney(p.debt)}）`, 'bad');
+    if (maint > 0) this.a.log(`${this._tag(p)} 的地产维护费 <span class="bad">-${formatMoney(maint)}</span>（余额 ${formatMoney(p.money)}）`, 'bad');
 
     const audit = this.g.regulatorAudit(p);
     if (audit) {
