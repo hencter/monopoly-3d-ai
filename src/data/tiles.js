@@ -49,13 +49,14 @@ export const ITEMS = {
   doubleGo:  { name: '双倍融资', icon: '🏦', desc: '下次经过起点融资到账 ×2' },
   freeze:    { name: '停工令',   icon: '🛑', desc: '指定对手下一回合内不可建设' },
   equalizeDebt: { name: '均负卡', icon: '💸', desc: '所有存活玩家的债务变为平均值' },
+  reverse:   { name: '反向卡',   icon: '🔄', desc: '下次掷骰反向行走，视角同步跟随' },
 };
 
 // 回合内可主动打出的卡（建设卡/公司卡为消耗型库存，在建设/公司面板使用）
 export const PLAYABLE_ITEMS = [
   'demolish', 'equalize', 'rob', 'swap', 'hibernate', 'intel',
   'bail', 'subsidy', 'debtCut', 'audit', 'poach', 'hedge', 'rush', 'warp', 'doubleGo', 'freeze',
-  'equalizeDebt',
+  'equalizeDebt', 'reverse',
 ];
 /** 手牌展示但不点击打出（被动/消耗库存） */
 export const PASSIVE_ITEMS = ['rentFree', 'permit', 'charter'];
@@ -89,11 +90,12 @@ export const ITEM_DRAW_WEIGHTS = {
   hibernate: 5,
   equalize: 4,
   equalizeDebt: 4,
+  reverse: 6,
 };
 /** 单种道具持有上限（禁止重复） */
 export const ITEM_STACK_CAP = 1;
-/** 手牌总数上限（超出自动挂黑市） */
-export const HAND_CAP = 10;
+/** 手牌槽位上限（满时需丢弃旧卡才能抽新） */
+export const HAND_CAP = 5;
 /** 黑市参考价（Ŧ万） */
 export const ITEM_MARKET_BASE = {
   remote: P(8), boost: P(8), rentFree: P(10), permit: P(4), charter: P(5),

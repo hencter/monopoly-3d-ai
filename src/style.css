@@ -2922,10 +2922,8 @@ button.big { font-size: 20px; padding: 14px 42px; border-radius: 14px; }
 .stock-card-price.up { color: #6dff9a; }
 .stock-card-price.down { color: #ff8a80; }
 .stock-card-chart {
-  flex: 0 0 148px;
-  height: 148px;
-  min-height: 148px;
-  max-height: 160px;
+  flex: 1 1 220px;
+  min-height: 200px;
   width: 100%;
   position: relative;
   overflow: hidden;
@@ -3152,17 +3150,15 @@ button.big { font-size: 20px; padding: 14px 42px; border-radius: 14px; }
     grid-template-rows: auto;
   }
   .stock-card-chart {
-    flex-basis: 132px;
-    height: 132px;
-    min-height: 132px;
+    flex-basis: 200px;
+    min-height: 180px;
   }
 }
 @media (max-width: 640px) {
   #stock-grid { grid-template-columns: 1fr; }
   .stock-card-chart {
-    flex-basis: 150px;
-    height: 150px;
-    min-height: 150px;
+    flex-basis: 220px;
+    min-height: 200px;
   }
 }
 
