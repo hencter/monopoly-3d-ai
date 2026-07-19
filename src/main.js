@@ -122,6 +122,12 @@ class BrowserAdapter {
     }
     if (name === 'turnStart') {
       this._jailRoll = false;
+      // 预拍资金快照，保证后续营收/分红 delta 能正确显示
+      if (p && !p.bankrupt) {
+        const snap = this._snap.get(p.id) || {};
+        snap.money = p.money;
+        this._snap.set(p.id, snap);
+      }
       this.clock?.onTurnStart?.();
       this.g.syncCalendar?.(this.clock);
       // 回合开始存档点（刷新/关页面后可续玩）
