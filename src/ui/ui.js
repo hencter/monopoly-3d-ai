@@ -246,6 +246,7 @@ export class UI {
       const deltaHtml = delta !== 0
         ? `<span class="money-delta ${delta > 0 ? 'up' : 'down'}">${delta > 0 ? '+' : ''}${formatMoney(delta)}</span>`
         : '';
+      const shortTotal = Object.values(p.shorts || {}).reduce((s, v) => s + (v || 0), 0);
       div.innerHTML = `
         <div class="rank-badge" aria-label="第 ${rank} 名">${rankIcon}</div>
         <div class="rank-main">
@@ -253,6 +254,7 @@ export class UI {
             <span class="dot" style="background:${PLAYER_COLORS_CSS[p.id]}"></span>
             <span>${p.name}</span>
             ${p.isAI ? '<span class="ai-badge">AI</span>' : ''}
+            ${shortTotal > 0 ? `<span class="short-badge">📉空${shortTotal}</span>` : ''}
           </div>
           <div class="pworth">${formatMoney(worth)}</div>
           <div class="pmoney">现金 ${formatMoney(p.money)}${p.debt > 0 ? ` <small class="debt">债 ${formatMoney(p.debt)}</small>` : ''}${deltaHtml}</div>

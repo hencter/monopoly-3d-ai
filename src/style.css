@@ -168,6 +168,7 @@ button.big { font-size: 20px; padding: 14px 42px; border-radius: 14px; }
 .player-card .pname { display: flex; align-items: center; gap: 8px; font-weight: bold; font-size: 15px; }
 .player-card .dot { width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.6); flex-shrink: 0; }
 .player-card .ai-badge { font-size: 11px; background: #7d3cff; padding: 1px 7px; border-radius: 8px; }
+.player-card .short-badge { font-size: 11px; background: #c0392b; padding: 1px 7px; border-radius: 8px; color: #ffcccc; }
 .player-card .pmoney { font-size: 12px; color: #9ab0cc; font-weight: 600; margin-top: 1px; letter-spacing: 0.02em; }
 .player-card .pmoney::before { content: none; }
 .money-delta {

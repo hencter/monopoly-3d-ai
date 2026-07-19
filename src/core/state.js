@@ -766,7 +766,7 @@ export class GameState {
       const mult = this.industryMult(k);
       const sh = stocks[k] || 0;
       if (sh > 0) d += Math.round(DIVIDEND_PER_SHARE * sh * mult);
-      const sk = shorts[k] || 0;
+      const sk = Math.max(0, shorts[k] || 0);
       if (sk > 0) d -= Math.round(DIVIDEND_PER_SHARE * sk * mult);
     }
     return d;
