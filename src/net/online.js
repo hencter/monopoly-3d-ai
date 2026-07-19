@@ -682,10 +682,10 @@ export async function startOnline(world, ui) {
           <div class="panel-row"><span class="grow">现金 <b style="color:var(--gold)">${formatMoney(p.money)}</b>　债务 <b class="debt">${formatMoney(p.debt)}</b></span></div>
           <div class="panel-row"><span class="grow">信用额度 ${formatMoney(limit)}，可用 <b>${avail}</b></span></div>
           <div class="panel-row"><span>借款：</span>
-            ${[100, 300, 500].map(v => `<button data-borrow="${v}" ${mirror.canBorrow(p, v) ? '' : 'disabled'}>+${formatMoney(v)}</button>`).join('')}
+            ${[ttc(100), ttc(300), ttc(500)].map(v => `<button data-borrow="${v}" ${mirror.canBorrow(p, v) ? '' : 'disabled'}>+${formatMoney(v)}</button>`).join('')}
           </div>
           <div class="panel-row"><span>还款：</span>
-            ${[100, 500].map(v => `<button data-repay="${v}" ${p.debt > 0 && p.money > 0 ? '' : 'disabled'}>-${formatMoney(v)}</button>`).join('')}
+            ${[ttc(100), ttc(500)].map(v => `<button data-repay="${v}" ${p.debt > 0 && p.money > 0 ? '' : 'disabled'}>-${formatMoney(v)}</button>`).join('')}
             <button data-repay="all" ${p.debt > 0 && p.money > 0 ? '' : 'disabled'}>还清</button>
           </div>
         </div>
@@ -1002,9 +1002,39 @@ function connectAndLobby(ui) {
           <input id="ol-code" maxlength="4" placeholder="房号" style="flex:1;padding:11px;border-radius:8px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.07);color:#fff;text-transform:uppercase;" />
           <button class="ol-btn" id="ol-join" style="flex:2;margin-top:0;">加入房间</button>
         </div>
+        <div id="ol-room-list" style="margin-top:12px;max-height:160px;overflow-y:auto"></div>
+        <button class="ol-btn" id="ol-refresh" style="margin-top:8px;width:100%;">🔄 刷新房间列表</button>
         <p class="ol-hint">房号为 4 位字符，由创建者分享给好友<br/>局域网联机请把地址改为房主 IP</p>`);
       el.querySelector('#ol-create').onclick = () => doConnect('create');
       el.querySelector('#ol-join').onclick = () => doConnect('join');
+      // 刷新房间列表
+      const doListRooms = () => {
+        const url = $('#ol-url').value.trim();
+        const sock = new WebSocket(url);
+        sock.onopen = () => sock.send(JSON.stringify({ t: 'listRooms' }));
+        sock.onmessage = (ev) => {
+          try {
+            const data = JSON.parse(ev.data);
+            if (data.t === 'roomList') {
+              const listEl = $('#ol-room-list');
+              if (data.list.length) {
+                listEl.innerHTML = data.list.map(r => `
+                  <div class="ol-room-row" style="padding:6px 8px;margin:4px 0;border-radius:6px;background:rgba(255,255,255,0.05);cursor:pointer"
+                       onclick="$('#ol-code').value='${r.code}';ui.toast('已填入房号：${r.code}')">
+                    <span style="color:var(--gold)">🏠 ${r.code}</span>
+                    <span style="margin-left:8px;color:#9ab">${r.name} · ${r.humans}人 · ${r.seats}座</span>
+                  </div>`).join('');
+              } else {
+                listEl.innerHTML = '<p class="ol-hint">暂无可用房间，创建你自己的吧</p>';
+              }
+            }
+          } catch {}
+          sock.close();
+        };
+        sock.onerror = () => { const listEl = $('#ol-room-list'); if (listEl) listEl.innerHTML = '<p class="ol-hint" style="color:#e67e22">无法连接服务器获取房间列表</p>'; };
+      };
+      el.querySelector('#ol-refresh').onclick = () => doListRooms();
+      doListRooms(); // 打开页面自动拉一次
     }
 
     async function doConnect(mode) {

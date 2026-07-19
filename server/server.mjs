@@ -1208,6 +1208,17 @@ wss.on('connection', (ws) => {
 
 function onMessage(ws, msg) {
   switch (msg.t) {
+    // ---------- 房间列表 ----------
+    case 'listRooms': {
+      const list = [];
+      for (const [code, room] of rooms) {
+        if (room.started) continue;
+        const humans = room.slots.filter(s => !s.isAI).length;
+        list.push({ code, name: room.slots[0]?.name || '?', humans, seats: room.slots.length });
+      }
+      ws.send(JSON.stringify({ t: 'roomList', list }));
+      break;
+    }
     // ---------- 建房 / 加入 ----------
     case 'create': {
       if (ws._room) return;
