@@ -182,8 +182,8 @@ function makeNetAdapter(room) {
     },
 
     phase(name, p) {
-      if (name === 'turnStart') room.currentSeat = p.id;
-      room.broadcast({ t: 'phase', name, playerId: p.id });
+      if (name === 'turnStart' && p) room.currentSeat = p.id;
+      room.broadcast({ t: 'phase', name, playerId: p?.id });
     },
 
     async animateDice(d1, d2) {
