@@ -1,3 +1,4 @@
+import { formatMoney } from '../data/currency.js';
 // AI 人格大脑：DeepSeek 驱动决策/谈判/闲聊；无 Key 或调用失败时回退本地启发式
 import { TILES, INDUSTRIES, INDUSTRY_STATES } from '../data/tiles.js';
 
@@ -40,11 +41,31 @@ export class AIBrain {
 
   // ---------- 上下文 ----------
   _playerCtx(p) {
+    const stocks = {};
+    const shorts = {};
+    for (const k of Object.keys(INDUSTRIES)) {
+      if (k === 'railroad' || k === 'utility') continue;
+      const long = p.stocks?.[k] || 0;
+      const sh = p.shorts?.[k] || 0;
+      if (long) stocks[INDUSTRIES[k].name] = long;
+      if (sh) shorts[INDUSTRIES[k].name] = sh;
+    }
     return {
-      名字: p.name, 现金: p.money, 债务: p.debt,
+      名字: p.name,
+      现金: p.money,
+      债务: p.debt,
+      身价: this.g.netWorth?.(p) ?? p.money,
+      位置: TILES[p.position]?.name,
       地产数: this.g.playerProperties(p.id).length,
-      公司: p.company ? `${INDUSTRIES[p.company.industry].name}Lv${p.company.level}` : '无',
-      行业景气: Object.fromEntries(Object.entries(this.g.industry).filter(([k]) => !['railroad', 'utility'].includes(k)).map(([k, v]) => [INDUSTRIES[k].name, INDUSTRY_STATES[v].name])),
+      道具: Object.fromEntries(Object.entries(p.items || {}).filter(([, n]) => n > 0)),
+      公司: p.company ? `${INDUSTRIES[p.company.industry].name}Lv${p.company.level}${p.company.ipo ? 'IPO' : ''}` : '无',
+      多头持股: stocks,
+      空头仓位: shorts,
+      行业景气: Object.fromEntries(
+        Object.entries(this.g.industry)
+          .filter(([k]) => !['railroad', 'utility'].includes(k))
+          .map(([k, v]) => [INDUSTRIES[k].name, INDUSTRY_STATES[v].name]),
+      ),
     };
   }
 
@@ -61,10 +82,25 @@ export class AIBrain {
     return ctx;
   }
 
-  async _json(system, user, fallback, maxTokens = 120) {
+  /**
+   * 调用 DeepSeek 拿 JSON 决策；失败回退 fallback
+   * 使用官方 response_format=json_object + 非思考模式（快、稳、省）
+   */
+  async _json(system, user, fallback, maxTokens = 200) {
+    if (!this.client?.enabled) return fallback;
+    const sys = `${system}\n你必须只输出一个合法 JSON 对象，不要 markdown，不要解释。`;
     const text = await this.client.chat(
-      [{ role: 'system', content: system }, { role: 'user', content: typeof user === 'string' ? user : JSON.stringify(user) }],
-      { maxTokens, temperature: 0.5 }
+      [
+        { role: 'system', content: sys },
+        { role: 'user', content: typeof user === 'string' ? user : JSON.stringify(user, null, 0) },
+      ],
+      {
+        maxTokens,
+        temperature: 0.4,
+        timeout: 22000,
+        jsonMode: true,
+        thinking: 'disabled', // 决策要快，不走思维链
+      },
     );
     if (!text) return fallback;
     const m = text.match(/\{[\s\S]*\}/);
@@ -122,7 +158,7 @@ export class AIBrain {
     const local = price >= fair
       ? { decision: 'accept', counterPrice: price, say: '成交！' }
       : price >= fair * 0.65
-        ? { decision: 'counter', counterPrice: Math.round(fair * 1.05), say: `这点钱？${Math.round(fair * 1.05)} 万... 我是说 ¥，拿走。` }
+        ? { decision: 'counter', counterPrice: Math.round(fair * 1.05), say: `这点钱？${formatMoney(Math.round(fair * 1.05))} 才够。` }
         : { decision: 'reject', counterPrice: 0, say: '打发叫花子呢？' };
 
     if (!this.client.enabled) return { ...local, fair };
@@ -181,8 +217,8 @@ export class AIBrain {
       };
       const text = await this.client.chat([
         { role: 'system', content: `你在大富翁商业战争游戏中扮演"${player.name}"，人设：${persona.style}。针对事件说一句15字以内的短评（符合人设，可幽默可嘲讽），只输出这句话本身。` },
-        { role: 'user', content: `事件：${events[kind] || '轮到你了'}。当前你现金¥${player.money}，债务¥${player.debt}。` },
-      ], { maxTokens: 60, temperature: 0.95 });
+        { role: 'user', content: `事件：${events[kind] || '轮到你了'}。当前你现金${formatMoney(player.money)}，债务${formatMoney(player.debt)}。` },
+      ], { maxTokens: 60, temperature: 0.95, thinking: 'disabled' });
       this._banterBusy = false;
       return (text || pick(BANTER[kind] || BANTER.chatGeneric)).replace(/["\n]/g, '').slice(0, 40);
     } catch {
@@ -197,8 +233,207 @@ export class AIBrain {
     const persona = this.personaOf(player);
     const text = await this.client.chat([
       { role: 'system', content: `你在大富翁商业战争游戏中扮演"${player.name}"，人设：${persona.style}。玩家"${fromName}"在局内聊天中对你说话，用一两句话回复（25字以内，符合人设，可谈生意可互怼），只输出回复本身。` },
-      { role: 'user', content: `你的现状：现金¥${player.money}，债务¥${player.debt}，地产${this.g.playerProperties(player.id).length}处。对方说：${message}` },
-    ], { maxTokens: 80, temperature: 0.9 });
+      { role: 'user', content: `你的现状：现金${formatMoney(player.money)}，债务${formatMoney(player.debt)}，地产${this.g.playerProperties(player.id).length}处。对方说：${message}` },
+    ], { maxTokens: 80, temperature: 0.9, thinking: 'disabled' });
     return (text || pick(BANTER.chatGeneric)).replace(/\n/g, ' ').slice(0, 60);
+  }
+
+  /** 掷骰阶段：遥控 / 加速 / 普通 */
+  async decideRoll(player, landingScores = {}) {
+    const local = { type: 'roll', boost: false, total: 0 };
+    const hasRemote = (player.items?.remote || 0) > 0;
+    const hasBoost = (player.items?.boost || 0) > 0;
+    if (hasRemote) {
+      let best = 0, bestS = -1e9;
+      for (let k = 1; k <= 6; k++) {
+        const s = landingScores[k] ?? 0;
+        if (s > bestS) { bestS = s; best = k; }
+      }
+      if (bestS > 1.5) Object.assign(local, { type: 'remote', total: best });
+    }
+    if (local.type === 'roll' && hasBoost && this.g.rng() < 0.3) local.boost = true;
+
+    if (!this.client.enabled) return local;
+    const persona = this.personaOf(player);
+    const r = await this._json(
+      `你在大富翁商业战争游戏中扮演"${player.name}"，人设：${persona.style}。决定如何前进。只输出JSON：{"type":"roll"或"remote","total":1到6(仅remote),"boost":true或false(仅roll且有加速卡)}`,
+      {
+        你的情况: this._playerCtx(player),
+        有遥控骰子: hasRemote,
+        有加速卡: hasBoost,
+        各点数落点评分: landingScores,
+      },
+      local,
+      100,
+    );
+    if (r.type === 'remote' && hasRemote) {
+      const t = Math.max(1, Math.min(6, Number(r.total) || local.total || 4));
+      return { type: 'remote', total: t, boost: false };
+    }
+    return {
+      type: 'roll',
+      boost: !!(hasBoost && (r.boost === true || r.boost === 'true')),
+      total: 0,
+    };
+  }
+
+  /** 监管约谈脱身 */
+  async decideJail(player, { canPay, hasCard }) {
+    let local = 'roll';
+    if (hasCard) local = 'card';
+    else if (canPay && player.money >= 300) local = 'pay';
+    if (!this.client.enabled) return local;
+    const persona = this.personaOf(player);
+    const r = await this._json(
+      `你在大富翁商业战争游戏中扮演"${player.name}"，人设：${persona.style}。在监管局选择脱身。只输出JSON：{"choice":"card"|"pay"|"roll"}`,
+      {
+        你的情况: this._playerCtx(player),
+        有免谈卡: hasCard,
+        可缴保证金: canPay,
+        尝试次数: player.jailTurns + 1,
+      },
+      { choice: local },
+      80,
+    );
+    const c = r.choice;
+    if (c === 'card' && hasCard) return 'card';
+    if (c === 'pay' && canPay) return 'pay';
+    return 'roll';
+  }
+
+  /** 是否使用免租卡 */
+  async decideItemUse(player, item, ctx) {
+    const local = (ctx?.rent || 0) >= 80;
+    if (!this.client.enabled) return local;
+    const persona = this.personaOf(player);
+    const r = await this._json(
+      `你在大富翁商业战争游戏中扮演"${player.name}"，人设：${persona.style}。是否使用免租卡。只输出JSON：{"use":true或false}`,
+      {
+        你的情况: this._playerCtx(player),
+        本次租金: ctx?.rent,
+        剩余免租卡: player.items?.rentFree || 0,
+      },
+      { use: local },
+      60,
+    );
+    return r.use === true || r.use === 'true';
+  }
+
+  /**
+   * 回合末完整经营计划（DeepSeek）
+   * @returns {Promise<{actions: object[], say: string}>}
+   */
+  async planTurnEnd(player) {
+    const g = this.g;
+    const localActions = this._localTurnEndPlan(player);
+    if (!this.client.enabled) return { actions: localActions, say: '' };
+
+    const persona = this.personaOf(player);
+    const buildable = [];
+    for (const set of g.buildableSets(player.id)) {
+      for (const i of set.tiles) {
+        if (g.canBuild(player, i)) {
+          buildable.push({ tileIdx: i, name: TILES[i].name, cost: TILES[i].houseCost, lv: g.houses[i] });
+        }
+      }
+    }
+    const stockOps = [];
+    for (const k of g.stockIndustries()) {
+      const long = player.stocks?.[k] || 0;
+      const sh = player.shorts?.[k] || 0;
+      stockOps.push({
+        ind: k,
+        name: INDUSTRIES[k].name,
+        price: g.stockPrice(k),
+        long,
+        short: sh,
+        canBuy: g.canBuyStock(player, k, 1),
+        canSell: long > 0,
+        canOpenShort: (g.maxOpenShort?.(player, k) || 0) > 0,
+        canCover: (g.maxCoverShort?.(player, k) || 0) > 0,
+      });
+    }
+    const opponents = g.players.filter((o) => o.id !== player.id && !o.bankrupt).map((o) => ({
+      id: o.id, name: o.name, money: o.money, net: g.netWorth(o),
+    }));
+    const cards = Object.entries(player.items || {}).filter(([, n]) => n > 0).map(([k, n]) => ({ item: k, n }));
+
+    const r = await this._json(
+      `你在大富翁商业战争游戏中扮演"${player.name}"，人设：${persona.style}。
+回合末可安排最多 6 个经营动作，按数组顺序执行。可选 op：
+borrow(amount), repay(amount), build(tileIdx), foundCompany(ind), upgradeCompany, ipo,
+buyStock(ind,n), sellStock(ind,n), openShort(ind,n), coverShort(ind,n),
+invest(founderId,n,fromFloat), paidDraw,
+playCard(item, 可选 targetId/tileIdx/myTile/theirTile/mode/ind),
+none。
+做空 openShort=先卖空；coverShort=买回平仓。不可同时多空同行业。
+只输出JSON：{"actions":[...],"say":"一句12字以内"}`,
+      {
+        你的情况: this._playerCtx(player),
+        可建楼: buildable.slice(0, 12),
+        股市: stockOps,
+        对手: opponents,
+        手牌: cards,
+        可创办公司: g.canFoundCompany(player),
+        可升级公司: g.canUpgradeCompany(player),
+        可IPO: g.canIPO(player),
+        信贷余额: Math.max(0, (g.creditLimit?.(player) || 0) - player.debt),
+        可付费抽牌: g.canPaidDraw?.(player),
+      },
+      { actions: localActions, say: '' },
+      480,
+    );
+
+    let actions = Array.isArray(r.actions) ? r.actions : localActions;
+    actions = actions.filter((a) => a && a.op && a.op !== 'none').slice(0, 6);
+    if (!actions.length) actions = localActions;
+    return { actions, say: String(r.say || '').slice(0, 40) };
+  }
+
+  /** 本地启发式回合末计划（DeepSeek 失败/未配置时） */
+  _localTurnEndPlan(player) {
+    const g = this.g;
+    const actions = [];
+    if (player.money < 160 && (g.creditLimit?.(player) || 0) - player.debt >= 300) {
+      actions.push({ op: 'borrow', amount: 300 });
+    }
+    if (player.debt > 0 && player.money > 800) {
+      actions.push({ op: 'repay', amount: player.debt });
+    }
+    // 建 1 次
+    for (const set of g.buildableSets(player.id)) {
+      const t = set.tiles.filter((i) => g.canBuild(player, i)).sort((a, b) => g.houses[a] - g.houses[b])[0];
+      if (t != null && player.money - TILES[t].houseCost >= 150) {
+        actions.push({ op: 'build', tileIdx: t });
+        break;
+      }
+    }
+    if (g.canFoundCompany(player) && player.money > 900) {
+      const keys = Object.keys(INDUSTRIES).filter((k) => k !== 'railroad' && k !== 'utility');
+      const fav = this.personaOf(player).favIndustry?.find((k) => keys.includes(k));
+      actions.push({ op: 'foundCompany', ind: fav || keys[0] });
+    } else if (g.canUpgradeCompany(player) && player.money > 900) {
+      actions.push({ op: 'upgradeCompany' });
+    }
+    if (player.money > 600) {
+      const k = g.stockIndustries().find((ind) => g.canBuyStock(player, ind, 1));
+      if (k) actions.push({ op: 'buyStock', ind: k, n: 1 });
+    }
+    if (player.money < 200) {
+      const k = g.stockIndustries().find((ind) => (player.stocks?.[ind] || 0) > 0);
+      if (k) actions.push({ op: 'sellStock', ind: k, n: 1 });
+      else {
+        const sk = g.stockIndustries().find((ind) => (g.maxOpenShort?.(player, ind) || 0) > 0);
+        if (sk) actions.push({ op: 'openShort', ind: sk, n: 1 });
+      }
+    }
+    // 空头盈利平仓：现价明显低于“应回补”时
+    for (const k of g.stockIndustries()) {
+      if ((player.shorts?.[k] || 0) > 0 && (g.maxCoverShort?.(player, k) || 0) > 0 && g.rng() < 0.4) {
+        actions.push({ op: 'coverShort', ind: k, n: 1 });
+        break;
+      }
+    }
+    return actions.slice(0, 5);
   }
 }

@@ -64,12 +64,29 @@ const after = await page.evaluate(() => ({
 }));
 
 let ok = true;
-// 恢复瞬间引擎会为被恢复玩家结算回合开始（公司营收），回合计数 +1 —— 属预期语义
+// 恢复瞬间引擎会为被恢复玩家结算回合开始（公司营收 + 股票分红），回合计数 +1 —— 属预期语义
+const mults = [0.6, 1, 1.35, 1.8];
+const S = 10_000; // 通天币缩放
+const DIV_BASE = 4 * S;
 after.players.forEach((p, i) => {
-  const revenue = i === save.nextPlayer && save.state.players[i].company
-    ? Math.round((6 + 13 * save.state.players[i].company.level) * [0.6, 1, 1.35, 1.8][save.state.industry[save.state.players[i].company.industry] ?? 1])
-    : 0;
-  if (p.money !== expectMoney[i] + revenue) { console.error(`玩家${i + 1} 资金不一致: 存档 ${expectMoney[i]}(+营收${revenue}) ≠ 恢复 ${p.money}`); ok = false; }
+  let revenue = 0;
+  let dividend = 0;
+  if (i === save.nextPlayer) {
+    const sp = save.state.players[i];
+    if (sp.company) {
+      revenue = Math.round((6 * S + 13 * S * sp.company.level) * mults[save.state.industry[sp.company.industry] ?? 1]);
+    }
+    if (sp.stocks) {
+      for (const [k, sh] of Object.entries(sp.stocks)) {
+        if (sh > 0) dividend += Math.round(DIV_BASE * sh * mults[save.state.industry[k] ?? 1]);
+      }
+    }
+  }
+  const expect = expectMoney[i] + revenue + dividend;
+  if (p.money !== expect) {
+    console.error(`玩家${i + 1} 资金不一致: 存档 ${expectMoney[i]}(+营收${revenue}+分红${dividend}) ≠ 恢复 ${p.money}`);
+    ok = false;
+  }
   if (p.position !== expectPos[i]) { console.error(`玩家${i + 1} 位置不一致: 存档 ${expectPos[i]} ≠ 恢复 ${p.position}`); ok = false; }
 });
 if (after.turn !== save.state.turn + 1) { console.error(`回合数不一致: ${save.state.turn}+1 ≠ ${after.turn}`); ok = false; }

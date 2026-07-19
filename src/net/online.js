@@ -1,22 +1,34 @@
 // 联机模式客户端：连接界面 → 大厅 → 对局（事件重放 / 输入转发 / 自建轻量操作面板）
 // 用法：import { startOnline } from './net/online.js'; startOnline(world, ui);
 import {
-  GameState, TILES, INDUSTRIES, INDUSTRY_STATES,
+  GameState, TILES, INDUSTRIES, INDUSTRY_STATES, STOCK_INDUSTRIES,
   COMPANY_FOUND_COST, COMPANY_MAX_LEVEL, companyUpgradeCost,
+  formatMoney, ttc, GO_SALARY,
 } from '../core/state.js';
-import { ITEMS } from '../data/tiles.js';
+import { ITEMS, MAX_SHARES_PER_IND } from '../data/tiles.js';
 import { PLAYER_COLORS, PLAYER_COLORS_CSS } from '../three/world.js';
 
 const $ = (s) => document.querySelector(s);
 const ownable = (t) => ['property', 'railroad', 'utility'].includes(t.type);
 
-// 5 种回合内主动卡（ITEMS 里只有前 4 种的元数据，这里补全展示信息）
 const ACTIVE_CARDS = {
-  demolish:   { icon: '💥', name: '拆迁卡', desc: '拆除任一对手的建筑 1 级' },
-  equalize:   { icon: '⚖️', name: '均富卡', desc: '所有存活玩家现金平均分配' },
-  rob:        { icon: '🥷', name: '窃取卡', desc: '偷取目标 20% 现金（上限 ¥300）' },
-  swap:       { icon: '🔁', name: '置换卡', desc: '用我一块地产换目标一块地产' },
-  hibernate:  { icon: '💤', name: '休眠卡', desc: '目标跳过下一个回合' },
+  demolish:     { icon: '💥', name: '拆迁卡',   desc: '拆除任一对手的建筑 1 级' },
+  equalize:     { icon: '💳', name: '均富卡',   desc: '所有存活玩家现金平均分配' },
+  rob:          { icon: '🥷', name: '抢夺卡',   desc: `偷取目标 20% 现金（上限 Ŧ300万）` },
+  swap:         { icon: '🔀', name: '换地卡',   desc: '用我一块地产换目标一块地产' },
+  hibernate:    { icon: '😴', name: '冬眠卡',   desc: '目标跳过下一个回合' },
+  intel:        { icon: '📰', name: '资讯卡',   desc: '发布利好/利空资讯，干扰股价' },
+  bail:         { icon: '🔓', name: '保释令',   desc: '在监管局时立即脱身' },
+  subsidy:      { icon: '🎁', name: '财政补贴', desc: '立即获得 Ŧ200万' },
+  debtCut:      { icon: '✂️', name: '债务豁免', desc: '减免最高 Ŧ400万债务' },
+  audit:        { icon: '🧾', name: '审计风暴', desc: '对手补缴 Ŧ150万税款' },
+  poach:        { icon: '🧲', name: '挖角',     desc: '随机偷取对手 1 张道具' },
+  hedge:        { icon: '☂️', name: '对冲保单', desc: '下次租金减半' },
+  rush:         { icon: '⚡', name: '抢工卡',   desc: '下次建楼免建设卡' },
+  warp:         { icon: '🌀', name: '跃迁卡',   desc: '传送到名下一块地产' },
+  doubleGo:     { icon: '🏦', name: '双倍融资', desc: '下次经过起点 ×2' },
+  freeze:       { icon: '🛑', name: '停工令',   desc: '对手下回合不可建设' },
+  equalizeDebt: { icon: '💸', name: '均负卡',   desc: '全员债务平均化' },
 };
 const WAIT_LABEL = { buy: '考虑收购', jail: '设法脱身', itemUse: '抉择道具', roll: '掷骰', endTurn: '回合收尾', trade: '考虑交易' };
 
@@ -24,7 +36,25 @@ const WAIT_LABEL = { buy: '考虑收购', jail: '设法脱身', itemUse: '抉择
 function revive(data) {
   const g = new GameState([]);
   Object.assign(g, data);
-  g.mortgaged = new Set(data.mortgaged);
+  g.mortgaged = new Set(data.mortgaged || []);
+  if (!g.marketHeat) g.marketHeat = Object.fromEntries(STOCK_INDUSTRIES.map(k => [k, 0]));
+  if (!g.newsMult) g.newsMult = Object.fromEntries(STOCK_INDUSTRIES.map(k => [k, 1]));
+  for (const p of g.players || []) {
+    if (!p.stocks) p.stocks = Object.fromEntries(STOCK_INDUSTRIES.map(k => [k, 0]));
+    if (!p.shorts) p.shorts = Object.fromEntries(STOCK_INDUSTRIES.map(k => [k, 0]));
+    if (p.items && p.items.intel == null) p.items.intel = 0;
+    if (p.items && p.items.permit == null) p.items.permit = 0;
+    if (p.items && p.items.charter == null) p.items.charter = 0;
+    if (p.freeDrawsLeft == null) p.freeDrawsLeft = 0;
+    if (p.paidDrawsUsed == null) p.paidDrawsUsed = 0;
+    if (p.company && !p.company.holders) {
+      p.company.holders = { [p.id]: 100 };
+      p.company.totalShares = 100;
+      p.company.freeFloat = 0;
+      p.company.pledged = 0;
+      p.company.ipo = !!p.company.ipo;
+    }
+  }
   return g;
 }
 
@@ -74,14 +104,32 @@ function showOverlay(html) {
 }
 function closeOverlay() { document.getElementById('ol-overlay')?.remove(); }
 
-/** 联机版弹窗（挂在 #modal/#modal-box，与 UI 类共用样式） */
+/** 联机版弹窗（挂在 #modal/#modal-box，与 UI 艺术 grid 壳共用） */
 const modal = () => document.getElementById('modal');
 const modalBox = () => document.getElementById('modal-box');
-function openModal(html) { modalBox().innerHTML = html; modal().classList.remove('hidden'); }
-function closeModal() { modal().classList.add('hidden'); }
+/** @type {import('../ui/ui.js').UI | null} */
+let _uiRef = null;
+function openModal(html, opts = {}) {
+  if (_uiRef?._openModal) {
+    _uiRef._openModal(html, opts);
+    return;
+  }
+  // 进局前兜底
+  modalBox().innerHTML = html;
+  modal().classList.remove('hidden');
+}
+function closeModal() {
+  if (_uiRef?.closeModal) {
+    _uiRef.closeModal();
+    return;
+  }
+  modal().classList.add('hidden');
+}
 
 export async function startOnline(world, ui) {
   injectCSS();
+  _uiRef = ui;
+  ui.bindWorld?.(world);
 
   // ================= 第一步：连接 + 大厅 =================
   const session = await connectAndLobby(ui).catch(err => {
@@ -106,7 +154,10 @@ export async function startOnline(world, ui) {
   let over = false;
 
   world.setPlayerCount(begin.roster.length);
-  for (const r of begin.roster) world.createToken(r.seat);
+  // 按镜像状态落子（中途加入/重连时位置与逻辑一致）
+  for (const p of mirror.players) {
+    if (!p.bankrupt) world.createToken(p.id, p.position ?? 0);
+  }
   world.onPick((tileIdx, x, y) => ui.showTileInfo(tileIdx, mirror, x, y));
 
   // 牌桌按钮：操作改为发消息给服务器
@@ -126,18 +177,22 @@ export async function startOnline(world, ui) {
   };
   $('#btn-build').onclick = () => tryOpen('build', openBuild);
   $('#btn-bank').onclick = () => tryOpen('bank', openBank);
-  $('#btn-company').onclick = () => tryOpen('company', openCompany);
+  $('#btn-company').onclick = () => tryOpen('company', openCompanyOnline);
+  // 股市：随时可看全场行情；仅 acting（自己操作窗口）时可买卖
+  $('#btn-stock')?.addEventListener('click', () => openStock(!!acting));
+  // 强制启用股市按钮（setButtons 默认 true，这里再兜底）
+  if (ui.el.btnStock) ui.el.btnStock.disabled = false;
   cardsBtn.onclick = () => tryOpen('cards', openCards);
-  $('#btn-trade').onclick = () => tryOpen('trade', () => {
-    ui.openTrade(mirror, mirror.players[mySeat], (offer) => {
-      send({ t: 'trade', ...offer });
-      ui.toast('报价已发出，等待对方回应…');
-    });
-  });
+  $('#btn-trade').onclick = () => tryOpen('invest', openInvest);
   $('#btn-camera').onclick = () => {
-    world.followEnabled = !world.followEnabled;
-    if (world.followEnabled) world.refocus();
-    ui.setCameraLabel(world.followEnabled);
+    const mode = world.cycleCameraMode();
+    ui.setCameraLabel(mode);
+    const tips = {
+      follow: '📷 跟随当前玩家',
+      free: '📷 自由视角（骰子特写不会抢镜）',
+      orbit: '🎥 通天观战 · 自动环绕棋盘',
+    };
+    ui.toast(tips[mode] || tips.follow, 1600);
   };
   $('#btn-settings').onclick = () => ui.toast('联机模式：AI 由服务器托管');
 
@@ -160,8 +215,11 @@ export async function startOnline(world, ui) {
     }
     ui.renderPlayers(mirror, activeId);
     ui.renderIndustries(mirror);
-    // 面板打开时跟随最新镜像重渲染（弹窗被关闭则放弃面板）
-    if (panelOpen) {
+    world.syncLivingZones?.(mirror.players, PLAYER_COLORS);
+    // 面板打开时跟随最新镜像重渲染
+    if (panelOpen === 'stock') {
+      stockUi?.refresh?.();
+    } else if (panelOpen) {
       if (ui.modalOpen) rerenderPanel();
       else panelOpen = null;
     }
@@ -196,8 +254,26 @@ export async function startOnline(world, ui) {
       case 'phase': onPhase(m); break;
       case 'dice': enqueue(() => world.animateDice(m.d1, m.d2)); break;
       case 'move': enqueue(() => world.moveToken(m.player, m.from, m.steps)); break;
-      case 'tele': enqueue(() => world.teleportToken(m.player, m.from, m.to)); break;
+      case 'tele': enqueue(() => {
+        const pl = mirror.players[m.player];
+        const name = m.playerName || pl?.name;
+        return world.teleportToken(m.player, m.from, m.to, { playerName: name });
+      }); break;
       case 'card': enqueue(() => ui.showCard(m.card, m.deck, m.player !== mySeat)); break;
+      case 'itemCast': enqueue(async () => {
+        const pl = mirror.players[m.playerId] || { id: m.playerId, name: m.name || '玩家' };
+        // 自己打出：手牌已播 FX，只高亮列表；其他人：完整出牌特效
+        const mine = m.playerId === mySeat;
+        await ui.showItemCast?.(pl, m.item, { silent: mine, skipFx: mine });
+      }); break;
+      case 'holo': enqueue(() => ui.showHoloNotice({
+        kind: m.kind || 'notice',
+        icon: m.icon || '📡',
+        title: m.title || '通知',
+        text: m.text || '',
+        auto: m.auto !== false,
+        duration: m.duration || 3800,
+      })); break;
       case 'ask': enqueue(() => onAsk(m)); break;
       case 'tradeResult': enqueue(() => onTradeResult(m)); break;
       case 'over': enqueue(() => onOver(m)); break;
@@ -218,14 +294,22 @@ export async function startOnline(world, ui) {
       world.setFollow(m.playerId);
       ui.setTurnInfo(`🎯 ${p ? p.name : ''} 的回合`);
       ui.toast(m.playerId === mySeat ? '🎯 轮到你了！' : `轮到 ${p ? p.name : '对手'}`);
-      ui.setButtons({});
+      // 观战阶段仍可看股市；清掉上一轮手牌
+      world.clearHandCards();
+      ui.setButtons({ stock: true });
       setActing(false);
       ui.el.itemBar.innerHTML = '';
       ui.renderPlayers(mirror, activeId);
+      if (panelOpen === 'stock') stockUi?.refresh?.();
+      if (panelOpen === 'invest') investUi?.refresh?.();
     } else if (m.name === 'waitRoll' && m.playerId !== mySeat) {
-      ui.setTurnInfo(`⏳ ${p ? p.name : '对手'} 掷骰中…`);
+      world.clearHandCards();
+      ui.setTurnInfo(`⏳ ${p ? p.name : '对手'} 掷骰中… · 可点「股市」观战行情`);
+      ui.setButtons({ stock: true });
     } else if (m.name === 'endTurn' && m.playerId !== mySeat) {
-      ui.setTurnInfo(`⏳ ${p ? p.name : '对手'} 回合收尾…`);
+      world.clearHandCards();
+      ui.setTurnInfo(`⏳ ${p ? p.name : '对手'} 回合收尾… · 可点「股市」观战行情`);
+      ui.setButtons({ stock: true });
     }
   }
 
@@ -258,7 +342,12 @@ export async function startOnline(world, ui) {
         send({ t: 'resp', reqId: m.reqId, value: null });
         break;
       }
-      case 'trade': { // 人类卖方收到的收购要约
+      case 'bankPledge': {
+        const yes = await ui.promptBankPledge(me(), { shares: m.shares || 5, loan: m.loan || 40 });
+        send({ t: 'resp', reqId: m.reqId, value: !!yes });
+        break;
+      }
+      case 'trade': { // 兼容旧协议
         const accept = await incomingTradeUI(m);
         send({ t: 'tradeResp', reqId: m.reqId, accept });
         break;
@@ -266,65 +355,88 @@ export async function startOnline(world, ui) {
     }
   }
 
-  /** 掷骰阶段：按钮 + 道具栏（remote/boost） */
+  /** 掷骰阶段：3D 手牌（remote/boost）+ 操作秒数房租计时 */
   function rollUI(p) {
     return new Promise((resolve) => {
-      ui.setTurnInfo(`${p.name}：请掷骰子`);
-      ui.setButtons({ roll: true, build: true, bank: true, trade: true, company: true });
+      ui.setTurnInfo(`${p.name}：请掷骰子 · 点下方手牌使用道具 · ⏱️房租按秒计`);
+      ui.setButtons({ roll: true, build: true, bank: true, trade: true, company: true, stock: true });
       setActing(true);
+      const stopRent = ui.startRentMeter({
+        waived: !!(mirror.hasHousing?.(p) || (p && mirror.playerProperties?.(mySeat)?.some(i => TILES[i]?.type === 'property'))),
+      });
       let boost = false;
       const bar = ui.el.itemBar;
       bar.innerHTML = '';
+
+      const bindHand = () => {
+        world.setHandCards(p.items, 'roll', async (item) => {
+          if (item === 'remote') {
+            const n = await ui.askNumber('🎯 遥控骰子：选择点数', 1, 6);
+            if (n != null) done({ type: 'remote', total: n });
+          } else if (item === 'boost') {
+            boost = !boost;
+            ui.toast(boost ? '🚀 加速卡已激活：本次 +3 步' : '已取消加速卡');
+            bindHand();
+          }
+        });
+      };
+      bindHand();
+
       const done = (action) => {
+        const opSeconds = stopRent();
+        world.clearHandCards();
         bar.innerHTML = '';
         ui.el.btnRoll.onclick = null;
-        ui.setButtons({});
+        ui.setButtons({ stock: true });
         setActing(false);
-        resolve(action);
+        resolve({ ...action, boost: action.type === 'roll' ? boost : action.boost, opSeconds });
       };
       ui.el.btnRoll.onclick = () => done({ type: 'roll', boost });
-
-      const mk = (item) => {
-        const n = p.items[item] || 0;
-        if (n <= 0) return null;
-        const b = document.createElement('button');
-        b.className = 'item-btn';
-        b.innerHTML = `${ITEMS[item].icon}<span class="cnt">${n}</span>`;
-        b.title = ITEMS[item].desc;
-        bar.appendChild(b);
-        return b;
-      };
-      const remoteBtn = mk('remote');
-      if (remoteBtn) remoteBtn.onclick = async () => {
-        const n = await ui.askNumber('🎯 遥控骰子：选择点数', 1, 6);
-        if (n != null) done({ type: 'remote', total: n });
-      };
-      const boostBtn = mk('boost');
-      if (boostBtn) boostBtn.onclick = () => {
-        boost = !boost;
-        boostBtn.classList.toggle('toggled', boost);
-        ui.toast(boost ? '🚀 加速卡已激活：本次 +3 步' : '已取消加速卡');
-      };
-      if ((p.items.rentFree || 0) > 0) {
-        const b = document.createElement('button');
-        b.className = 'item-btn';
-        b.disabled = true;
-        b.title = '免租卡：踩到他人地产时自动询问使用';
-        b.innerHTML = `${ITEMS.rentFree.icon}<span class="cnt">${p.items.rentFree}</span>`;
-        bar.appendChild(b);
-      }
     });
   }
 
-  /** 回合收尾：可操作面板或结束回合 */
+  /** 回合收尾：3D 手牌出牌 + 建设/股市/入股/付费抽牌或结束回合 */
   function endTurnUI(p) {
-    ui.setTurnInfo(`${p.name}：可操作或结束回合`);
-    ui.setButtons({ end: true, build: true, bank: true, trade: true, company: true });
+    ui.setTurnInfo(`${p.name}：可建设/股市/入股/抽牌 · 点下方手牌出牌 · 或结束回合`);
     setActing(true);
+    const syncDraw = () => {
+      const cur = me();
+      const can = mirror.canPaidDraw?.(cur);
+      const left = Math.max(0, 3 - (cur.paidDrawsUsed || 0));
+      ui.setButtons({
+        end: true, build: true, bank: true, trade: true, company: true, stock: true, draw: !!can,
+      });
+      ui.setDrawLabel(can ? `🃏 抽牌(${left})` : '🃏 抽牌');
+    };
+    const refreshHand = () => {
+      const cur = me();
+      world.setHandCards(cur.items, 'endTurn', async (item) => {
+        closeModal();
+        panelOpen = null;
+        useCard(item);
+        setTimeout(() => { if (acting) { refreshHand(); syncDraw(); } }, 120);
+      });
+    };
+    refreshHand();
+    syncDraw();
+    if (ui.el.btnDraw) {
+      ui.el.btnDraw.onclick = () => {
+        if (!mirror.canPaidDraw?.(me())) {
+          ui.toast('无法抽牌（现金不足或次数用尽）');
+          return;
+        }
+        send({ t: 'op', op: 'drawPack', mode: 'paid' });
+        setTimeout(() => { if (acting) { refreshHand(); syncDraw(); } }, 100);
+      };
+    }
     return ui.waitButton('end').then(() => {
-      ui.setButtons({});
+      if (ui.el.btnDraw) ui.el.btnDraw.onclick = null;
+      world.clearHandCards();
+      ui.setButtons({ stock: true });
       setActing(false);
-      if (panelOpen) { closeModal(); panelOpen = null; }
+      if (panelOpen === 'stock') stockUi?.refresh?.();
+      else if (panelOpen === 'invest') investUi?.refresh?.();
+      else if (panelOpen) { closeModal(); panelOpen = null; }
     });
   }
 
@@ -334,7 +446,7 @@ export async function startOnline(world, ui) {
     openModal(`
       <h2>🤝 收购要约</h2>
       <div class="modal-body">
-        <p><b>${m.fromName}</b> 想出价 <b style="color:var(--gold)">¥${m.price}</b> 收购你的 <b>${t.name}</b>（市值 ¥${t.price}）。</p>
+        <p><b>${m.fromName}</b> 想出价 <b style="color:var(--gold)">${formatMoney(m.price)}</b> 收购你的 <b>${t.name}</b>（市值 ${formatMoney(t.price)}）。</p>
       </div>
       <div class="btn-row">
         <button class="primary" data-a="1">✅ 同意出售</button>
@@ -377,12 +489,142 @@ export async function startOnline(world, ui) {
   function rerenderPanel() {
     if (panelOpen === 'build') renderBuild();
     else if (panelOpen === 'bank') renderBank();
-    else if (panelOpen === 'company') renderCompany();
+    else if (panelOpen === 'company') renderCompanyOnline();
     else if (panelOpen === 'cards') renderCards();
+    else if (panelOpen === 'stock') renderStock();
+    else if (panelOpen === 'invest') renderInvest();
+  }
+
+  // ---------- 入股（全屏） ----------
+  let investUi = null;
+  function openInvest() {
+    panelOpen = 'invest';
+    import('../ui/investMarket.js').then(({ openInvestMarket }) => {
+      investUi?.close?.();
+      const canTrade = !!acting;
+      const api = openInvestMarket(mirror, me(), () => {}, {
+        log: (html, cls) => ui.log(html, cls),
+        toast: (m) => ui.toast(m),
+      }, canTrade ? {
+        invest: (founderId, n = 1, fromFloat = false) =>
+          send({ t: 'op', op: 'invest', founderId, n, fromFloat: !!fromFloat }),
+      } : {}, { tradeable: canTrade });
+      const orig = api.close;
+      api.close = () => { orig(); panelOpen = null; investUi = null; };
+      investUi = api;
+    });
+  }
+  function renderInvest() {
+    investUi?.refresh?.();
+  }
+
+  function openCompanyOnline() { panelOpen = 'company'; renderCompanyOnline(); }
+  function renderCompanyOnline() {
+    const p = me();
+    if (!p.company) {
+      openCompany();
+      return;
+    }
+    const c = p.company;
+    const ind = INDUSTRIES[c.industry] || { icon: '🏢', name: '公司', css: '#888' };
+    const st = INDUSTRY_STATES[mirror.industry[c.industry] ?? 1];
+    const charters = p.items?.charter || 0;
+    const held = c.holders?.[mySeat] ?? 0;
+    const unit = mirror.companySharePrice?.(p) ?? 0;
+    const value = mirror.companyValue?.(p) ?? 0;
+    const myRev = mirror.companyRevenue?.(p) ?? 0;
+    modal()?.classList.add('company-fs');
+    modalBox()?.classList.add('company-wide');
+    openModal(`
+      <div class="company-fs-shell">
+        <header class="company-fs-head co-hero" style="background:
+          radial-gradient(ellipse 70% 100% at 100% 0%, ${ind.css}33, transparent 55%),
+          linear-gradient(135deg, #152238, #0b1320)">
+          <div class="co-hero-top">
+            <div class="co-hero-icon" style="border-color:${ind.css}88">${ind.icon}</div>
+            <div class="co-hero-meta">
+              <h2>🏢 ${p.name} · ${ind.name}
+                <span class="co-badge lv">Lv${c.level}/${COMPANY_MAX_LEVEL}</span>
+                ${c.ipo ? '<span class="co-badge ipo">IPO</span>' : '<span class="co-badge private">未上市</span>'}
+              </h2>
+              <div class="co-sub">${ind.name} · 景气 ${st.icon}${st.name}
+                · 现金 ${formatMoney(p.money)} · 📜 公司卡 ${charters}</div>
+            </div>
+          </div>
+        </header>
+        <div class="company-fs-body">
+          <div class="co-panel co-panel-kpis">
+            <div class="co-kpi-grid">
+              <div class="co-kpi"><div class="k">估值</div><div class="v">${formatMoney(value)}</div></div>
+              <div class="co-kpi"><div class="k">每股</div><div class="v">${formatMoney(unit)}</div></div>
+              <div class="co-kpi"><div class="k">本回合营收</div><div class="v">${formatMoney(myRev)}</div></div>
+              <div class="co-kpi"><div class="k">持股 / 质押 / 池</div>
+                <div class="v soft">${held} / ${c.pledged || 0} / ${c.freeFloat || 0}</div></div>
+            </div>
+          </div>
+          <div class="co-panel co-panel-ops" style="grid-column:1/-1;grid-row:2">
+            <h3>经营操作</h3>
+            <div class="co-actions">
+              <button type="button" class="co-act primary-act" data-up ${mirror.canUpgradeCompany(p) ? '' : 'disabled'}>
+                <div class="t">⬆️ 升级</div><div class="d">需 📜 公司卡</div>
+              </button>
+              <button type="button" class="co-act" data-ipo>
+                <div class="t">📢 IPO</div><div class="d">${c.ipo ? '已上市' : '启动上市'}</div>
+              </button>
+              <button type="button" class="co-act danger-act" data-pledge>
+                <div class="t">🏦 质押 5 股</div><div class="d">银行贷款</div>
+              </button>
+              <button type="button" class="co-act" data-close>
+                <div class="t">关闭</div><div class="d">返回棋盘</div>
+              </button>
+            </div>
+          </div>
+        </div>
+        <footer class="company-fs-foot btn-row">
+          <button type="button" class="primary" data-close>完 成</button>
+        </footer>
+      </div>`, { layout: 'wide', kind: 'company' });
+    modalBox().querySelector('[data-up]')?.addEventListener('click', () => send({ t: 'op', op: 'upgradeCompany' }));
+    modalBox().querySelector('[data-ipo]')?.addEventListener('click', () => send({ t: 'op', op: 'ipo' }));
+    modalBox().querySelector('[data-pledge]')?.addEventListener('click', () => send({ t: 'op', op: 'pledge', n: 5 }));
+    bindClose();
+  }
+
+  // ---------- 股市（全屏 K 线） ----------
+  let stockUi = null;
+  function openStock(tradeable = false) {
+    panelOpen = 'stock';
+    import('../ui/stockMarket.js').then(({ openStockMarket }) => {
+      stockUi?.close?.();
+      const canTrade = !!tradeable && !!acting;
+      // 观战：仍传入完整 mirror + 本座位玩家（用于高亮「我的持仓」），只读展示全场
+      const api = openStockMarket(mirror, me(), () => {}, {
+        log: (html, cls) => ui.log(html, cls),
+        toast: (m) => ui.toast(m),
+      }, canTrade ? {
+        buy: (key, n = 1) => send({ t: 'op', op: 'buyStock', industry: key, n }),
+        sell: (key, n = 1) => send({ t: 'op', op: 'sellStock', industry: key, n }),
+        openShort: (key, n = 1) => send({ t: 'op', op: 'openShort', industry: key, n }),
+        coverShort: (key, n = 1) => send({ t: 'op', op: 'coverShort', industry: key, n }),
+      } : {}, { tradeable: canTrade, readOnly: !canTrade });
+      const orig = api.close;
+      api.close = () => { orig(); panelOpen = null; stockUi = null; };
+      stockUi = api;
+    });
+  }
+  function renderStock() {
+    stockUi?.refresh?.();
   }
 
   function bindClose() {
-    modalBox().querySelector('[data-close]').onclick = () => { closeModal(); panelOpen = null; };
+    modalBox().querySelectorAll('[data-close]').forEach((el) => {
+      el.onclick = () => {
+        modal()?.classList.remove('company-fs');
+        modalBox()?.classList.remove('company-wide');
+        closeModal();
+        panelOpen = null;
+      };
+    });
   }
 
   // ---------- 建楼 ----------
@@ -390,6 +632,7 @@ export async function startOnline(world, ui) {
   function renderBuild() {
     const p = me();
     const props = mirror.playerProperties(mySeat).filter(i => TILES[i].type === 'property');
+    const permits = p.items?.permit || 0;
     let rows = '';
     for (const i of props) {
       const t = TILES[i], h = mirror.houses[i];
@@ -397,13 +640,16 @@ export async function startOnline(world, ui) {
       rows += `<div class="build-prop">
         <span class="bp-name">${INDUSTRIES[t.color].icon}${t.name}</span>
         <span class="bp-houses">${stars}</span>
-        <button data-build="${i}" ${mirror.canBuild(p, i) ? '' : 'disabled'}>＋建 ¥${t.houseCost}</button>
+        <button data-build="${i}" ${mirror.canBuild(p, i) ? '' : 'disabled'}>＋建 ${formatMoney(t.houseCost)}</button>
         <button data-sell="${i}" ${mirror.canSellHouse(p, i) ? '' : 'disabled'}>－卖</button>
       </div>`;
     }
     openModal(`
-      <h2>🏠 楼宇建设 <small style="color:#9ab">现金 ¥${p.money}</small></h2>
-      <div class="modal-body">${rows || '<p class="muted">你还没有地产。<br/>集齐同一行业的全部资产（且无抵押）后即可建楼。</p>'}</div>
+      <h2>🏠 楼宇建设 <small style="color:#9ab">现金 ${formatMoney(p.money)} · 🏗️ 建设卡 ${permits} · 每级消耗 1 张</small></h2>
+      <div class="modal-body">
+        ${permits < 1 ? '<p style="color:#e67e22">没有建设卡，无法建楼。</p>' : ''}
+        ${rows || '<p class="muted">你还没有地产。</p>'}
+      </div>
       <div class="btn-row"><button class="primary" data-close>完 成</button></div>`);
     modalBox().querySelectorAll('[data-build]').forEach(b => b.onclick = () => send({ t: 'op', op: 'build', tileIdx: +b.dataset.build }));
     modalBox().querySelectorAll('[data-sell]').forEach(b => b.onclick = () => send({ t: 'op', op: 'sellHouse', tileIdx: +b.dataset.sell }));
@@ -425,8 +671,8 @@ export async function startOnline(world, ui) {
           ${mirror.houses[i] > 0 ? `<span class="tag">${mirror.houses[i]}级</span>` : ''}
           ${mort ? '<span class="mort-flag">已抵押</span>' : ''}</span>
         ${mort
-          ? `<button data-unmort="${i}" ${mirror.canUnmortgage(p, i) ? '' : 'disabled'}>赎回 ¥${mirror.unmortgageCost(i)}</button>`
-          : `<button data-mort="${i}" ${mirror.canMortgage(p, i) ? '' : 'disabled'}>抵押 +¥${mirror.mortgageValue(i)}</button>`}
+          ? `<button data-unmort="${i}" ${mirror.canUnmortgage(p, i) ? '' : 'disabled'}>赎回 ${formatMoney(mirror.unmortgageCost(i))}</button>`
+          : `<button data-mort="${i}" ${mirror.canMortgage(p, i) ? '' : 'disabled'}>抵押 +${formatMoney(mirror.mortgageValue(i))}</button>`}
       </div>`;
     }
     openModal(`
@@ -434,13 +680,13 @@ export async function startOnline(world, ui) {
       <div class="modal-body">
         <div class="panel-section">
           <h3>💰 信贷 <small class="muted">每回合债务计息 5%</small></h3>
-          <div class="panel-row"><span class="grow">现金 <b style="color:var(--gold)">¥${p.money}</b>　债务 <b class="debt">¥${p.debt}</b></span></div>
-          <div class="panel-row"><span class="grow">信用额度 ¥${limit}，可用 <b>${avail}</b></span></div>
+          <div class="panel-row"><span class="grow">现金 <b style="color:var(--gold)">${formatMoney(p.money)}</b>　债务 <b class="debt">${formatMoney(p.debt)}</b></span></div>
+          <div class="panel-row"><span class="grow">信用额度 ${formatMoney(limit)}，可用 <b>${avail}</b></span></div>
           <div class="panel-row"><span>借款：</span>
-            ${[100, 300, 500].map(v => `<button data-borrow="${v}" ${mirror.canBorrow(p, v) ? '' : 'disabled'}>+¥${v}</button>`).join('')}
+            ${[100, 300, 500].map(v => `<button data-borrow="${v}" ${mirror.canBorrow(p, v) ? '' : 'disabled'}>+${formatMoney(v)}</button>`).join('')}
           </div>
           <div class="panel-row"><span>还款：</span>
-            ${[100, 500].map(v => `<button data-repay="${v}" ${p.debt > 0 && p.money > 0 ? '' : 'disabled'}>-¥${v}</button>`).join('')}
+            ${[100, 500].map(v => `<button data-repay="${v}" ${p.debt > 0 && p.money > 0 ? '' : 'disabled'}>-${formatMoney(v)}</button>`).join('')}
             <button data-repay="all" ${p.debt > 0 && p.money > 0 ? '' : 'disabled'}>还清</button>
           </div>
         </div>
@@ -460,47 +706,58 @@ export async function startOnline(world, ui) {
     bindClose();
   }
 
-  // ---------- 公司 ----------
+  // ---------- 公司（全屏 grid） ----------
   function openCompany() { panelOpen = 'company'; renderCompany(); }
   function renderCompany() {
     const p = me();
+    const charters = p.items?.charter || 0;
+    modal()?.classList.add('company-fs');
+    modalBox()?.classList.add('company-wide');
     if (!p.company) {
-      const canAfford = p.money >= COMPANY_FOUND_COST;
+      const canFound = mirror.canFoundCompany(p);
+      const cards = Object.entries(INDUSTRIES)
+        .filter(([k]) => k !== 'railroad' && k !== 'utility')
+        .map(([k, ind]) => {
+          const st = INDUSTRY_STATES[mirror.industry[k] ?? 1];
+          return `<button type="button" class="co-found-card" data-ind="${k}" ${canFound ? '' : 'disabled'}
+            style="border-color:${ind.css}44;--ind:${ind.css}">
+            <div class="fi">${ind.icon}</div>
+            <div class="fn">${ind.name}</div>
+            <div class="fs">景气 ${st.icon}${st.name} · ×${st.mult}</div>
+            <div class="fm"><span>选此赛道</span></div>
+          </button>`;
+        }).join('');
       openModal(`
-        <h2>🏢 创办公司</h2>
-        <div class="modal-body">
-          <p>注册费 <b style="color:var(--gold)">¥${COMPANY_FOUND_COST}</b>　你的现金：¥${p.money}</p>
-          <p class="muted">公司每回合产生营收 = 基础营收 × 行业景气度。选择赛道：</p>
-          <div class="btn-row" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-            ${Object.entries(INDUSTRIES).filter(([k]) => k !== 'railroad' && k !== 'utility').map(([k, ind]) => {
-              const st = INDUSTRY_STATES[mirror.industry[k]];
-              return `<button data-ind="${k}" ${canAfford ? '' : 'disabled'}>${ind.icon} ${ind.name} ${st.icon}</button>`;
-            }).join('')}
+        <div class="company-fs-shell">
+          <header class="company-fs-head co-hero" style="background:linear-gradient(135deg,#1a2a44,#0c1524)">
+            <div class="co-hero-top">
+              <div class="co-hero-icon">🏢</div>
+              <div class="co-hero-meta">
+                <h2>创办商业帝国</h2>
+                <div class="co-sub">注册费 <b style="color:var(--gold)">${formatMoney(COMPANY_FOUND_COST)}</b>
+                  · 📜 公司卡 ${charters} · 现金 ${formatMoney(p.money)}</div>
+                ${charters < 1 ? '<div class="co-sub" style="color:#e67e22;margin-top:6px">没有公司卡，无法创办</div>' : ''}
+              </div>
+            </div>
+          </header>
+          <div class="company-fs-body co-found-layout">
+            <div class="co-panel co-panel-span">
+              <h3>选择赛道</h3>
+              <div class="co-found-grid">${cards}</div>
+            </div>
           </div>
-        </div>
-        <div class="btn-row"><button data-close>再想想</button></div>`);
-      modalBox().querySelectorAll('[data-ind]').forEach(b => b.onclick = () => send({ t: 'op', op: 'foundCompany', industry: b.dataset.ind }));
+          <footer class="company-fs-foot btn-row">
+            <button type="button" data-close>再想想</button>
+          </footer>
+        </div>`, { layout: 'wide', kind: 'company' });
+      modalBox().querySelectorAll('[data-ind]').forEach(b => {
+        b.onclick = () => send({ t: 'op', op: 'foundCompany', industry: b.dataset.ind });
+      });
       bindClose();
       return;
     }
-    const c = p.company;
-    const ind = INDUSTRIES[c.industry];
-    const st = INDUSTRY_STATES[mirror.industry[c.industry]];
-    const upCost = companyUpgradeCost(c.level);
-    openModal(`
-      <h2>🏢 ${p.name}的公司</h2>
-      <div class="modal-body"><div class="panel-section">
-        <div class="panel-row">赛道：${ind.icon} ${ind.name} ${st.icon}${st.name}</div>
-        <div class="panel-row">等级：<b style="color:var(--gold)">Lv${c.level}</b> / Lv${COMPANY_MAX_LEVEL}</div>
-        <div class="panel-row">每回合营收：<b style="color:var(--gold)">¥${mirror.companyRevenue(p)}</b></div>
-      </div></div>
-      <div class="btn-row">
-        ${c.level < COMPANY_MAX_LEVEL ? `<button class="primary" data-up ${mirror.canUpgradeCompany(p) ? '' : 'disabled'}>⬆️ 升级（¥${upCost}）</button>` : '<span class="tag">已满级</span>'}
-        <button data-close>关 闭</button>
-      </div>`);
-    const up = modalBox().querySelector('[data-up]');
-    if (up) up.onclick = () => send({ t: 'op', op: 'upgradeCompany' });
-    bindClose();
+    // 已有公司时走完整 HQ 全屏
+    renderCompanyOnline();
   }
 
   // ---------- 卡牌（5 种回合内主动卡） ----------
@@ -532,7 +789,7 @@ export async function startOnline(world, ui) {
     if (item === 'rob' || item === 'hibernate') {
       const targets = mirror.players.filter(q => q.id !== mySeat && !q.bankrupt);
       pickRow(`选择目标玩家`, targets.map(q => ({
-        label: `${q.name}（现金 ¥${q.money}）`,
+        label: `${q.name}（现金 ${formatMoney(q.money)}）`,
         cb: () => send({ t: 'op', op: 'playCard', item, targetId: q.id }),
       })), back);
       return;
@@ -562,14 +819,62 @@ export async function startOnline(world, ui) {
       pickRow(`🔁 第一步：选择交换对象`, others.map(q => ({
         label: q.name,
         cb: () => pickRow(`🔁 第二步：选择对方的地产`, tradable(q.id).map(j => ({
-          label: `${TILES[j].name}（市值 ¥${TILES[j].price}）`,
+          label: `${TILES[j].name}（市值 ${formatMoney(TILES[j].price)}）`,
           cb: () => pickRow(`🔁 第三步：选择你要给出的地产`, mine.map(i => ({
-            label: `${TILES[i].name}（市值 ¥${TILES[i].price}）`,
+            label: `${TILES[i].name}（市值 ${formatMoney(TILES[i].price)}）`,
             cb: () => send({ t: 'op', op: 'playCard', item: 'swap', myTile: i, targetTile: j }),
           })), back),
         })), back),
       })), back);
+      return;
     }
+    if (item === 'intel') {
+      pickRow(`📰 资讯方向`, [
+        { label: '📈 发布利好', cb: () => {
+          const keys = STOCK_INDUSTRIES;
+          pickRow(`选择行业`, keys.map(k => ({
+            label: `${INDUSTRIES[k].icon} ${INDUSTRIES[k].name}`,
+            cb: () => send({ t: 'op', op: 'intel', industry: k, mode: 'up' }),
+          })), back);
+        }},
+        { label: '📉 发布利空', cb: () => {
+          const keys = STOCK_INDUSTRIES;
+          pickRow(`选择行业`, keys.map(k => ({
+            label: `${INDUSTRIES[k].icon} ${INDUSTRIES[k].name}`,
+            cb: () => send({ t: 'op', op: 'intel', industry: k, mode: 'down' }),
+          })), back);
+        }},
+      ], back);
+      return;
+    }
+    if (item === 'audit' || item === 'freeze') {
+      const targets = mirror.players.filter(q => q.id !== mySeat && !q.bankrupt);
+      pickRow(`选择目标玩家`, targets.map(q => ({
+        label: `${q.name}（现金 ${formatMoney(q.money)}）`,
+        cb: () => send({ t: 'op', op: 'playCard', item, targetId: q.id }),
+      })), back);
+      return;
+    }
+    if (item === 'poach') {
+      const targets = mirror.players.filter(q => q.id !== mySeat && !q.bankrupt && Object.values(q.items || {}).some(v => v > 0));
+      if (!targets.length) { ui.toast('对手都没有道具卡'); return; }
+      pickRow(`选择目标玩家`, targets.map(q => ({
+        label: `${q.name}`,
+        cb: () => send({ t: 'op', op: 'playCard', item, targetId: q.id }),
+      })), back);
+      return;
+    }
+    if (item === 'warp') {
+      const mine = mirror.playerProperties(mySeat);
+      if (!mine.length) { ui.toast('你名下没有地产'); return; }
+      pickRow(`选择传送目的地`, mine.map(i => ({
+        label: `${TILES[i].name}（${formatMoney(TILES[i].price)}）`,
+        cb: () => send({ t: 'op', op: 'playCard', item: 'warp', tileIdx: i }),
+      })), back);
+      return;
+    }
+    // 无目标直接打出
+    send({ t: 'op', op: 'playCard', item });
   }
 
   /** 面板内的选项列表（带返回） */

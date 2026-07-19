@@ -74,14 +74,18 @@ class HeadlessAdapter {
       const c = sets.flatMap(s => s.tiles).filter(i => g.houses[i] < target)
         .sort((a, b) => g.houses[a] - g.houses[b] || TILES[a].houseCost - TILES[b].houseCost);
       if (!c.length || !g.canBuild(p, c[0]) || p.money - TILES[c[0]].houseCost < 150) break;
+      if ((p.items.permit || 0) < 1) p.items.permit = 1;
       g.buyHouse(p, c[0]);
     }
     // 公司
-    if (g.canFoundCompany(p) && p.money > 900) {
-      const keys = Object.keys(INDUSTRIES).filter(k => k !== 'railroad' && k !== 'utility');
-      g.foundCompany(p, keys[Math.floor(rng() * keys.length)]);
-    } else if (g.canUpgradeCompany(p) && p.money > 900 && rng() < 0.5) {
-      g.upgradeCompany(p);
+    if (p.money > 900) {
+      if ((p.items.charter || 0) < 1) p.items.charter = 1;
+      if (g.canFoundCompany(p)) {
+        const keys = Object.keys(INDUSTRIES).filter(k => k !== 'railroad' && k !== 'utility');
+        g.foundCompany(p, keys[Math.floor(rng() * keys.length)]);
+      } else if (g.canUpgradeCompany(p) && rng() < 0.5) {
+        g.upgradeCompany(p);
+      }
     }
     // 主动卡牌（随机演练每种卡）
     const opponents = g.players.filter(o => o.id !== p.id && !o.bankrupt);

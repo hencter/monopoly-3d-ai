@@ -19,6 +19,8 @@ await page.evaluate(() => {
   game.owner[31] = 0; game.houses[31] = 5;  // 大模型实验室 地标
   game.owner[32] = 0; game.houses[32] = 3;  // 智能体平台 3级
   game.owner[26] = 1; game.houses[26] = 2;  // 芯片设计所 2级
+  game.players[0].items.charter = (game.players[0].items.charter || 0) + 1;
+  game.players[1].items.charter = (game.players[1].items.charter || 0) + 1;
   game.foundCompany(game.players[0], 'ai');
   game.players[0].company.level = 4;
   game.foundCompany(game.players[1], 'semiconductor');

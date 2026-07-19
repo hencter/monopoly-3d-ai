@@ -7,7 +7,7 @@
 ## ✨ 特性
 
 - **3D 棋盘**：40 格现代商业棋盘（大模型实验室、算力中心、晶圆工厂…），摩天楼随等级长高、公司总部大楼、6 种棋子造型、真实 3D 骰子（1/4 红点中式传统）、智能跟随镜头
-- **DeepSeek AI 对手**：AI 有人格（风控总监/赌徒/科技新贵/老江湖/萌新），会**对话聊天**、购地决策、**交易谈判（可拒绝/还价）**；未配置 Key 时自动回退本地策略与台词
+- **DeepSeek AI 对手**（需配置 API Key）：购地决策、交易谈判、局内聊天、部分回合经营走官方 Chat Completions；未配置 Key 时**全程本地启发式**（不是 DeepSeek）
 - **卡牌玩法**：遥控骰子/加速卡/免租卡/拆迁卡/均富卡/抢夺卡/换地卡/冬眠卡，回合内自由打出
 - **现代经济系统**：8 大行业景气度（低迷/平稳/向好/火爆）影响租金与营收、行业新闻事件、银行贷款（利滚利）、地产抵押赎回、创办并升级公司
 - **2~34 人同屏**：本地热座 + AI 混编，大人数自动紧凑布局
@@ -37,7 +37,20 @@ npm run dev        # 终端2：游戏页面 → 开始界面点「🌐 联机对
 
 ## 🤖 接入 DeepSeek
 
-游戏内右上角「⚙️ AI」填入 [DeepSeek API Key](https://platform.deepseek.com/)（仅存本机 localStorage，直发官方接口；开发服务器已内置 `/ds` 代理规避 CORS），AI 即刻获得真·对话与谈判能力。支持 `deepseek-chat` / `deepseek-reasoner`。
+1. 打开 [platform.deepseek.com](https://platform.deepseek.com/api_keys) 申请 API Key  
+2. 游戏内「⚙️ AI」填入 Key，选择模型（默认 `deepseek-v4-flash`）  
+3. 点「测试连接」确认  
+
+- **Base URL**：`https://api.deepseek.com`（OpenAI 兼容 `/chat/completions`）  
+- 开发服务器通过 Vite 代理 `/ds` → 官方 API，规避浏览器 CORS  
+- Key 只存本机 `localStorage`，不经过自建后端  
+- 官方文档：<https://api-docs.deepseek.com/zh-cn/>  
+
+| 有 Key | 无 Key |
+|--------|--------|
+| 购地 / 交易还价 / 聊天 / 部分经营 = DeepSeek | 全部本地规则 + 内置台词 |
+
+模型：`deepseek-v4-flash`、`deepseek-v4-pro`（旧名 `deepseek-chat` / `deepseek-reasoner` 兼容至 2026-07-24）。
 
 ## 🃏 卡牌
 

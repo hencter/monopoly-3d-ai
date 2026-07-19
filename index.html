@@ -15,23 +15,84 @@
   <!-- 行业景气条 -->
   <div id="industries" class="hidden"></div>
 
-  <!-- 操作面板 -->
-  <div id="actions" class="hidden">
-    <div id="turn-info">准备中…</div>
-    <button id="btn-roll" class="primary big">🎲 掷骰子</button>
-    <div class="btn-grid" id="item-bar"></div>
-    <div class="btn-grid">
-      <button id="btn-build">🏠 建设</button>
-      <button id="btn-bank">🏦 银行</button>
-      <button id="btn-trade">🤝 交易</button>
-      <button id="btn-company">🏢 公司</button>
-      <button id="btn-camera">📷 跟随</button>
-      <button id="btn-settings">⚙️ AI</button>
-    </div>
-    <button id="btn-end">结束回合 ➜</button>
+  <!-- 游戏日历 / T+（全员各操作完一轮 = T+1） -->
+  <div id="game-clock" class="hidden" title="全员各操作完一轮 = 1 个 T+ 交易日&#10;点击切换盘中钟倍速">
+    <span class="gc-icon">📅</span>
+    <span id="game-clock-text">T+0 · —</span>
+    <span class="gc-speed" id="game-clock-speed">1×</span>
   </div>
 
-  <!-- 聊天面板 -->
+  <!-- CSS 扇形手牌（在底部 HUD 上方） -->
+  <div id="hand-fan" class="hidden" aria-label="手牌"></div>
+
+  <!-- 出牌 HUD 3D 特效层 -->
+  <div id="card-cast-fx" class="hidden" aria-hidden="true">
+    <div class="cast-stage">
+      <div class="cast-beam"></div>
+      <div class="cast-ring cast-ring-a"></div>
+      <div class="cast-ring cast-ring-b"></div>
+      <div class="cast-sparkles"></div>
+      <div class="cast-card-wrap">
+        <img class="cast-card-img" alt="" />
+        <div class="cast-card-glow"></div>
+      </div>
+      <div class="cast-title"></div>
+    </div>
+  </div>
+
+  <!-- 进监管局：A4 红头「监管调查通知书」 -->
+  <div id="jail-notice-fx" class="hidden" aria-hidden="true">
+    <div class="jn-backdrop"></div>
+    <div class="jn-stage">
+      <div class="jn-paper">
+        <img class="jn-bg" alt="" draggable="false" />
+        <div class="jn-content">
+          <div class="jn-org">商业帝国市场监督管理局</div>
+          <div class="jn-title">监 管 调 查 通 知 书</div>
+          <div class="jn-no"></div>
+          <div class="jn-to"><span class="jn-name">当事人</span>：</div>
+          <div class="jn-text"></div>
+          <div class="jn-sign">
+            <div class="jn-agency">商业帝国市场监督管理局</div>
+            <div class="jn-date"></div>
+          </div>
+        </div>
+        <div class="jn-stamp">约谈中</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 底部操作 HUD -->
+  <div id="actions" class="hidden">
+    <div class="hud-shell">
+      <div id="turn-info">准备中…</div>
+      <div id="rent-meter" class="hidden" title="生活区房租按操作秒数累计，有房产可豁免">
+        <span class="rm-icon">⏱️</span>
+        <span id="rent-meter-text">思考 0s · 预估房租 Ŧ0</span>
+      </div>
+      <div class="hud-row">
+        <button id="btn-roll" class="primary hud-roll">🎲 掷骰子</button>
+        <div class="hud-ops">
+          <button id="btn-build">🏠 建设</button>
+          <button id="btn-bank">🏦 银行</button>
+          <button id="btn-trade">💼 入股</button>
+          <button id="btn-company">🏢 公司</button>
+          <button id="btn-stock">📈 股市</button>
+          <button id="btn-market">🏴 黑市</button>
+          <button id="btn-draw" title="付费抽取道具补给包">🃏 抽牌</button>
+          <button id="btn-camera">📷 跟随</button>
+          <button id="btn-settings">⚙️ AI</button>
+        </div>
+        <button id="btn-end" class="hud-end">结束回合 ➜</button>
+      </div>
+      <div class="btn-grid" id="item-bar"></div>
+    </div>
+  </div>
+
+  <!-- 玩家留言：视频式横向弹幕层（右→左） -->
+  <div id="chat-danmaku-layer" class="hidden" aria-live="polite"></div>
+
+  <!-- 聊天面板（输入 + 历史） -->
   <div id="chat-wrap" class="hidden">
     <div id="chat-log"></div>
     <div id="chat-input-row">
@@ -40,8 +101,14 @@
     </div>
   </div>
 
-  <!-- 日志 -->
-  <div id="log-wrap" class="hidden"><div id="log"></div></div>
+  <!-- 操作记录（右上）+ 战报弹幕层（中左） -->
+  <div id="log-wrap" class="hidden">
+    <div class="log-panel">
+      <div class="log-panel-title">📋 操作记录</div>
+      <div id="log" class="log-history"></div>
+    </div>
+    <div id="danmaku-layer" aria-live="polite"></div>
+  </div>
 
   <!-- 格子信息卡 -->
   <div id="tile-info" class="hidden"></div>
@@ -52,11 +119,59 @@
   <!-- 提示条 -->
   <div id="toast" class="hidden"></div>
 
+  <!-- 全屏股市（K 线 + 公告轮播） -->
+  <div id="stock-market" class="hidden">
+    <div id="stock-news-ticker">
+      <div class="stock-news-label">📢 行业公告</div>
+      <div id="stock-news-track"></div>
+    </div>
+    <div class="stock-market-head">
+      <h2>📈 全市场行情</h2>
+      <div class="stock-market-meta">
+        <span id="stock-cash">现金 ¥0</span>
+        <button type="button" id="stock-close" class="primary">关 闭</button>
+      </div>
+    </div>
+    <div id="stock-grid"></div>
+  </div>
+
+  <!-- 全屏入股投资 -->
+  <div id="invest-market" class="hidden">
+    <div class="invest-market-head">
+      <h2>💼 入股投资</h2>
+      <div class="invest-market-meta">
+        <span id="invest-cash">现金 ¥0</span>
+        <button type="button" id="invest-close" class="primary">关 闭</button>
+      </div>
+    </div>
+    <p class="invest-market-tip">以公允价即时买入其他玩家公司股份 · 可向创始人购入或从 IPO 公众池买入 · 无需对方点同意</p>
+    <div id="invest-grid"></div>
+    <div id="invest-empty" class="hidden"></div>
+  </div>
+
+  <!-- HUD 全息通知卡（风口/风险/系统通知） -->
+  <div id="holo-hud" class="hidden" aria-live="polite">
+    <div class="holo-beam"></div>
+    <div class="holo-stage">
+      <img class="holo-projector" src="/textures/hud/holo_projector.png" alt="" />
+      <div class="holo-card-wrap">
+        <div class="holo-card-frame"></div>
+        <div class="holo-card-body">
+          <div class="holo-card-icon"></div>
+          <div class="holo-card-title"></div>
+          <div class="holo-card-text"></div>
+          <button type="button" class="holo-card-ok primary">确 定</button>
+        </div>
+      </div>
+    </div>
+    <div class="holo-scanlines"></div>
+  </div>
+
   <!-- 开始界面 -->
   <div id="start-screen">
     <div class="start-card">
       <h1>🌆 商业帝国 <span>3D</span></h1>
-      <p class="subtitle">2~34 人同屏 · DeepSeek AI 对手 · 行业战争 · 银行金融 · 创办公司</p>
+      <p class="subtitle">通天币 Ŧ 经济 · 2~34 人同屏 · DeepSeek AI · 行业战争 · 股市 IPO</p>
       <div id="continue-game" class="hidden">
         <button id="btn-continue" class="primary big">🕒 继续上次对局</button>
         <div class="continue-meta"><span id="continue-info"></span><a id="btn-delete-save" href="javascript:void 0">删除存档</a></div>
@@ -71,7 +186,9 @@
       </div>
       <button id="btn-start" class="primary big">🎮 单机开局</button>
       <button id="btn-online" class="big" style="margin-top:10px;">🌐 联机对战（回合制）</button>
-      <p class="hint">买地建楼收租 · 行业景气影响收益 · 银行贷款加杠杆 · 创办公司赚营收 · 卡牌改变战局<br/>拖拽旋转视角 · 滚轮缩放 · 点击格子看详情 · F 键镜头归位 · 空格掷骰 · M 键静音<br/>联机需先启动服务器：<code>npm run server</code></p>
+      <p class="hint">买地建楼收租 · 行业景气影响收益 · 银行贷款加杠杆 · 创办公司赚营收 · 卡牌改变战局<br/>
+        拖拽旋转 · 滚轮缩放 · <b>WASD</b> 平移（Shift 加速）· <b>双击画面</b> 鼠标控制方向（Esc 退出）· F 镜头模式 · 空格掷骰 · M 静音<br/>
+        联机需先启动服务器：<code>npm run server</code></p>
     </div>
   </div>
 

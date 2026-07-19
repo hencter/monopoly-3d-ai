@@ -15,6 +15,7 @@
     "balance": "node test/balance.mjs"
   },
   "dependencies": {
+    "lightweight-charts": "^4.2.3",
     "three": "^0.182.0",
     "ws": "^8.21.1"
   },
