@@ -115,11 +115,12 @@ button.big { font-size: 20px; padding: 14px 42px; border-radius: 14px; }
 }
 .player-card .rank-main { min-width: 0; }
 .player-card .pworth {
-  font-size: 16px;
+  font-size: 18px;
   color: var(--gold);
-  font-weight: 800;
-  margin-top: 2px;
-  letter-spacing: 0.02em;
+  font-weight: 900;
+  margin: 4px 0 6px;
+  letter-spacing: 0.03em;
+  text-shadow: 0 0 12px rgba(240,199,94,0.3);
 }
 .player-card.top-1 {
   border-color: rgba(240, 199, 94, 0.55);

@@ -390,41 +390,53 @@ none。
     return { actions, say: String(r.say || '').slice(0, 40) };
   }
 
-  /** 本地启发式回合末计划（DeepSeek 失败/未配置时） */
+  /** 本地启发式回合末计划（类人行为：会负债、不秒还、偶尔冲动） */
   _localTurnEndPlan(player) {
     const g = this.g;
+    const rng = g.rng;
     const actions = [];
-    if (player.money < 160 && (g.creditLimit?.(player) || 0) - player.debt >= 300) {
-      actions.push({ op: 'borrow', amount: 300 });
+
+    // 积极举债：现金不够就借
+    if (player.money < ttc(400) && (g.creditLimit?.(player) || 0) - player.debt >= ttc(200)) {
+      const amt = rng() < 0.5 ? ttc(200) : ttc(500);
+      actions.push({ op: 'borrow', amount: amt });
     }
-    if (player.debt > 0 && player.money > 800) {
-      actions.push({ op: 'repay', amount: player.debt });
+    // 只在大赚或欠太多时还钱（人类不秒还）
+    if (player.debt > 0) {
+      if (player.money > ttc(3000) || player.debt > ttc(2000)) {
+        actions.push({ op: 'repay', amount: player.debt });
+      } else if (player.money > ttc(1500) && rng() < 0.3) {
+        actions.push({ op: 'repay', amount: Math.min(player.debt, ttc(500)) });
+      }
     }
-    // 建 1 次
+    // 建楼
     for (const set of g.buildableSets(player.id)) {
       const t = set.tiles.filter((i) => g.canBuild(player, i)).sort((a, b) => g.houses[a] - g.houses[b])[0];
-      if (t != null && player.money - TILES[t].houseCost >= 150) {
+      if (t != null && player.money - TILES[t].houseCost >= ttc(200)) {
         actions.push({ op: 'build', tileIdx: t });
         break;
       }
     }
-    if (g.canFoundCompany(player) && player.money > 900) {
+    // 创办/升级公司（不秒创，留钱）
+    if (g.canFoundCompany(player) && player.money > ttc(800) && rng() < 0.6) {
       const keys = Object.keys(INDUSTRIES).filter((k) => k !== 'railroad' && k !== 'utility');
       const fav = this.personaOf(player).favIndustry?.find((k) => keys.includes(k));
       actions.push({ op: 'foundCompany', ind: fav || keys[0] });
-    } else if (g.canUpgradeCompany(player) && player.money > 900) {
+    } else if (g.canUpgradeCompany(player) && player.money > ttc(800) && rng() < 0.5) {
       actions.push({ op: 'upgradeCompany' });
     }
-    if (player.money > 600) {
+    // 买股票（不那么积极）
+    if (player.money > ttc(500) && rng() < 0.5) {
       const k = g.stockIndustries().find((ind) => g.canBuyStock(player, ind, 1));
       if (k) actions.push({ op: 'buyStock', ind: k, n: 1 });
     }
-    if (player.money < 200) {
+    // 缺钱卖股或做空
+    if (player.money < ttc(200)) {
       const k = g.stockIndustries().find((ind) => (player.stocks?.[ind] || 0) > 0);
       if (k) actions.push({ op: 'sellStock', ind: k, n: 1 });
       else {
         const sk = g.stockIndustries().find((ind) => (g.maxOpenShort?.(player, ind) || 0) > 0);
-        if (sk) actions.push({ op: 'openShort', ind: sk, n: 1 });
+        if (sk && rng() < 0.3) actions.push({ op: 'openShort', ind: sk, n: 1 });
       }
     }
     // 空头盈利平仓：现价明显低于“应回补”时
@@ -435,7 +447,6 @@ none。
       }
     }
     // 启发式出牌
-    const rng = g.rng;
     const items = player.items || {};
     const ops = g.players.filter(o => o.id !== player.id && !o.bankrupt);
     if (items.subsidy > 0 && rng() < 0.9) actions.push({ op: 'playCard', item: 'subsidy' });
