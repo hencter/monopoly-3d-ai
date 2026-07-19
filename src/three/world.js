@@ -969,20 +969,27 @@ export class World {
   _buildBoard() {
     const rim = new THREE.Mesh(
       new THREE.BoxGeometry(26.6, 0.8, 26.6),
-      stdMat('board_rim', { color: 0xffffff, roughness: 0.45, metalness: 0.55, repeat: 4, offsetX: 0, offsetY: 0 })
+      new THREE.MeshStandardMaterial({ color: 0x2c3e50, roughness: 0.45, metalness: 0.55 })
     );
-    if (!TEX.board_rim) rim.material.color.setHex(0x2c3e50);
     rim.position.y = -0.45;
     rim.receiveShadow = true;
     this.scene.add(rim);
-    const base = new THREE.Mesh(
-      new THREE.BoxGeometry(25.4, 0.5, 25.4),
-      stdMat('board_felt', { color: 0xffffff, roughness: 0.95, metalness: 0, repeat: 3, offsetX: 0, offsetY: 0 })
-    );
-    if (!TEX.board_felt) base.material.color.setHex(0x16324a);
-    base.position.y = -0.05;
-    base.receiveShadow = true;
-    this.scene.add(base);
+
+    // 棋盘底面：Box 侧面纯色，下沉让顶面在地面以下
+    const baseMat = new THREE.MeshStandardMaterial({ color: 0x122438, roughness: 0.95, metalness: 0 });
+    const baseBox = new THREE.Mesh(new THREE.BoxGeometry(25.4, 0.5, 25.4), baseMat);
+    baseBox.position.y = -0.3;
+    baseBox.receiveShadow = true;
+    this.scene.add(baseBox);
+
+    // 顶面独立 Plane，避免 BoxGeometry UV 拉伸
+    const topGeo = new THREE.PlaneGeometry(25.4, 25.4);
+    topGeo.rotateX(-Math.PI / 2);
+    const topMat = stdMat('board_felt', { color: 0xffffff, roughness: 0.85, metalness: 0, repeat: 4 });
+    const topFace = new THREE.Mesh(topGeo, topMat);
+    topFace.position.y = 0.002;
+    topFace.receiveShadow = true;
+    this.scene.add(topFace);
 
     // 中央 Logo
     const [lc, lctx] = makeCanvas(512, 512);
