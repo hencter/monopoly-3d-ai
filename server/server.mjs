@@ -688,6 +688,11 @@ function playCard(room, p, msg, err) {
       const avg = g.playEqualizeDebt();
       return `💸 ${p.name} 打出均负卡，全员债务均化为 ${formatMoney(avg)}`;
     }
+    case 'reverse': {
+      g.useItem(p, 'reverse');
+      g.playReverse(p);
+      return `🔄 ${p.name} 激活反向卡，下次掷骰反向行走`;
+    }
     default:
       err('该卡牌不能主动使用');
       return '';

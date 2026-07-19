@@ -203,6 +203,10 @@ export class GameState {
   }
 
   moveSteps(player, steps) {
+    if (player.reverseWalk) {
+      steps = -steps;
+      player.reverseWalk = false;
+    }
     const from = player.position;
     let to = from + steps;
     let passedGo = false;
@@ -797,6 +801,7 @@ export class GameState {
   buyHouse(player, tileIdx) {
     if (!this.canBuild(player, tileIdx)) return false;
     player.money -= TILES[tileIdx].houseCost;
+    player.stamina = Math.max(0, (player.stamina || 0) - STAMINA_BUILD);
     this.recordTransaction(player, -TILES[tileIdx].houseCost, `建设${TILES[tileIdx].name}`);
     if (player.rushBuild) {
       player.rushBuild = false;
@@ -1100,7 +1105,10 @@ export class GameState {
    * @returns null | { fine, reason }
    */
   regulatorAudit(player, rng = this.rng) {
-    if (player.bankrupt || rng() > 0.30) return null; // 30% 触发率（原18%）
+    if (player.bankrupt || rng() > 0.15) return null; // 15% 触发率
+    // IRS cooldown: 被征税后 3 回合内不再查
+    if (player._lastAuditTurn != null && this.turn - player._lastAuditTurn < 3) return null;
+    player._lastAuditTurn = this.turn;
     let fine = 0;
     let reason = '';
     if (player.debt > ttc(800) && player.money < player.debt * 0.3) {
@@ -1459,6 +1467,11 @@ export class GameState {
   /** 双倍融资：下次经过起点融资到账 ×2 */
   playDoubleGo(player) {
     player.doubleGo = true;
+  }
+
+  /** 反向卡：下次掷骰反向行走 */
+  playReverse(player) {
+    player.reverseWalk = true;
   }
 
   /** 停工令：指定对手下一回合内不可建设 */

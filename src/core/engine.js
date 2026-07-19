@@ -210,6 +210,7 @@ export class Engine {
         boost = !!(action && action.boost);
         if (boost && !this.g.useItem(p, 'boost')) boost = false;
         else if (boost) this.a.onItemCast?.(p, 'boost');
+        if (p.reverseWalk) this.a.log(`${this._tag(p)} 🔄反向卡生效，本次反向行走`, 'card');
         d1 = this.g.rollDie();
         d2 = this.g.rollDie();
       }

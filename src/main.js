@@ -479,7 +479,45 @@ class BrowserAdapter {
         for (const o of opponents) {
           for (const i of g.playerProperties(o.id)) {
             if (g.houses[i] > 0 && g.calcRent(i) > best) { best = g.calcRent(i); tile = i; }
+          }
+        }
       }
+      if (tile < 0 || !g.useItem(p, 'demolish')) return;
+      g.houses[tile]--;
+      this.ui.showItemCast?.(p, 'demolish');
+      const owner = g.players[g.owner[tile]];
+      this.log(`${p.name} 发动 💥拆迁卡，${owner?.name} 的 ${TILES[tile].name} 被拆了一级！`, 'bad');
+      return;
+    }
+    if (item === 'reverse') {
+      if (!g.useItem(p, 'reverse')) return;
+      g.playReverse(p);
+      this.ui.showItemCast?.(p, 'reverse');
+      this.log(`${p.name} 激活 🔄反向卡`, 'card');
+      return;
+    }
+    if (item === 'swap') {
+      const o = g.players[Number(a.targetId)];
+      const my = Number(a.myTile);
+      const their = Number(a.theirTile);
+      if (!o || !g.useItem(p, 'swap')) return;
+      if (g.playSwap(p, o, my, their)) {
+        this.ui.showItemCast?.(p, 'swap');
+        this.log(`🔀 ${p.name} 用 ${TILES[my].name} 换了 ${o.name} 的 ${TILES[their].name}`, 'good');
+      }
+      return;
+    }
+    if (item === 'intel') {
+      const keys = g.stockIndustries();
+      const ind = keys.includes(a.ind) ? a.ind : keys[0];
+      const mode = a.mode === 'down' ? 'down' : 'up';
+      if (!g.useItem(p, 'intel')) return;
+      const news = g.applyNews(ind, mode);
+      if (news) {
+        this.ui.showItemCast?.(p, 'intel');
+        this.log(`📰 ${p.name} 发布${mode === 'up' ? '利好' : '利空'}：${INDUSTRIES[ind].icon}${INDUSTRIES[ind].name}`, 'card');
+      }
+      return;
     }
     if (item === 'bail') {
       if (!p.inJail || !g.useItem(p, 'bail')) return;
@@ -567,36 +605,6 @@ class BrowserAdapter {
       this.ui.showItemCast?.(p, 'equalizeDebt');
       this.log(`💸 ${p.name} 打出均负卡，全员债务均化为 ${formatMoney(avg)}`, 'card');
       return;
-    }
-  }
-      if (tile < 0 || !g.useItem(p, 'demolish')) return;
-      g.houses[tile]--;
-      this.ui.showItemCast?.(p, 'demolish');
-      const owner = g.players[g.owner[tile]];
-      this.log(`${p.name} 发动 💥拆迁卡，${owner?.name} 的 ${TILES[tile].name} 被拆了一级！`, 'bad');
-      return;
-    }
-    if (item === 'swap') {
-      const o = g.players[Number(a.targetId)];
-      const my = Number(a.myTile);
-      const their = Number(a.theirTile);
-      if (!o || !g.useItem(p, 'swap')) return;
-      if (g.playSwap(p, o, my, their)) {
-        this.ui.showItemCast?.(p, 'swap');
-        this.log(`🔀 ${p.name} 用 ${TILES[my].name} 换了 ${o.name} 的 ${TILES[their].name}`, 'good');
-      }
-      return;
-    }
-    if (item === 'intel') {
-      const keys = g.stockIndustries();
-      const ind = keys.includes(a.ind) ? a.ind : keys[0];
-      const mode = a.mode === 'down' ? 'down' : 'up';
-      if (!g.useItem(p, 'intel')) return;
-      const news = g.applyNews(ind, mode);
-      if (news) {
-        this.ui.showItemCast?.(p, 'intel');
-        this.log(`📰 ${p.name} 发布${mode === 'up' ? '利好' : '利空'}：${INDUSTRIES[ind].icon}${INDUSTRIES[ind].name}`, 'card');
-      }
     }
   }
 
@@ -806,6 +814,14 @@ class BrowserAdapter {
         await this._announceCast(p, item);
         this.log(`💸 ${p.name} 打出均负卡，全员债务平均为 ${formatMoney(avgDebt)}`, 'card');
         soundManager.play('coin');
+        this.update();
+        break;
+      case 'reverse':
+        if (!this.g.useItem(p, 'reverse')) return;
+        this.g.playReverse(p);
+        await this._announceCast(p, item);
+        this.log(`${p.name} 激活 🔄反向卡：下次掷骰反向行走`, 'card');
+        soundManager.play('click');
         this.update();
         break;
     }

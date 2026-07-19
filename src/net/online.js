@@ -5,7 +5,7 @@ import {
   COMPANY_FOUND_COST, COMPANY_MAX_LEVEL, companyUpgradeCost,
   formatMoney, ttc, GO_SALARY,
 } from '../core/state.js';
-import { ITEMS, MAX_SHARES_PER_IND } from '../data/tiles.js';
+import { ITEMS, MAX_SHARES_PER_IND, HAND_CAP } from '../data/tiles.js';
 import { PLAYER_COLORS, PLAYER_COLORS_CSS } from '../three/world.js';
 
 const $ = (s) => document.querySelector(s);
@@ -29,6 +29,7 @@ const ACTIVE_CARDS = {
   doubleGo:     { icon: '🏦', name: '双倍融资', desc: '下次经过起点 ×2' },
   freeze:       { icon: '🛑', name: '停工令',   desc: '对手下回合不可建设' },
   equalizeDebt: { icon: '💸', name: '均负卡',   desc: '全员债务平均化' },
+  reverse:      { icon: '🔄', name: '反向卡',   desc: '下次掷骰反向行走' },
 };
 const WAIT_LABEL = { buy: '考虑收购', jail: '设法脱身', itemUse: '抉择道具', roll: '掷骰', endTurn: '回合收尾', trade: '考虑交易' };
 
@@ -791,7 +792,7 @@ export async function startOnline(world, ui) {
     const p = me();
     const market = mirror.blackMarket || [];
     const total = mirror.countItems?.(p) || 0;
-    const room = Math.max(0, 10 - total);
+    const room = Math.max(0, HAND_CAP - total);
     const myListings = market.filter(e => e.sellerId === mySeat);
     const otherListings = market.filter(e => e.sellerId !== mySeat);
     const pending = p.pendingListings || [];

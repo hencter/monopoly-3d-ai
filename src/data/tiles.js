@@ -102,7 +102,7 @@ export const ITEM_MARKET_BASE = {
   demolish: P(15), equalize: P(25), rob: P(15), swap: P(18), hibernate: P(18),
   intel: P(12), bail: P(12), subsidy: P(10), debtCut: P(12), audit: P(15),
   poach: P(18), hedge: P(10), rush: P(10), warp: P(18), doubleGo: P(15),
-  freeze: P(18), equalizeDebt: P(25),
+  freeze: P(18), equalizeDebt: P(25), reverse: P(18),
 };
 /** 回合开始赠送的免费抽牌次数 */
 export const FREE_DRAWS_PER_TURN = 1;
