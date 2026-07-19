@@ -255,6 +255,7 @@ export class UI {
             <span>${p.name}</span>
             ${p.isAI ? '<span class="ai-badge">AI</span>' : ''}
             ${shortTotal > 0 ? `<span class="short-badge">📉空${shortTotal}</span>` : ''}
+            <button class="ledger-btn" data-ledger="${p.id}" title="账本">📋</button>
           </div>
           <div class="pworth">${formatMoney(worth)}</div>
           <div class="pmoney">现金 ${formatMoney(p.money)}${p.debt > 0 ? ` <small class="debt">债 ${formatMoney(p.debt)}</small>` : ''}${deltaHtml}</div>
@@ -274,8 +275,41 @@ export class UI {
         if (e.target.closest('button')) return;
         div.classList.toggle('expanded');
       });
+      div.querySelector('.ledger-btn').onclick = (e) => {
+        e.stopPropagation();
+        this.openLedger(p, game);
+      };
       wrap.appendChild(div);
     });
+  }
+
+  openLedger(player, game) {
+    const entries = player.ledger || [];
+    const recent = entries.slice(-50).reverse();
+    const rows = recent.length
+      ? recent.map(e => {
+        const cls = e.amount >= 0 ? 'good' : 'bad';
+        const sign = e.amount >= 0 ? '+' : '';
+        return `<div class="panel-row">
+          <span class="grow">T${e.turn || '?'} ${e.reason}</span>
+          <span class="${cls}" style="min-width:100px;text-align:right">${sign}${formatMoney(e.amount)}</span>
+          <span class="muted" style="min-width:110px;text-align:right">余额 ${formatMoney(e.balance)}</span>
+        </div>`;
+      }).join('')
+      : '<p class="muted">暂无交易记录</p>';
+    const income = entries.filter(e => e.amount > 0).reduce((s, e) => s + e.amount, 0);
+    const expense = entries.filter(e => e.amount < 0).reduce((s, e) => s + e.amount, 0);
+    this._openModal(`
+      <h2>📋 ${player.name} 的账本 <small style="color:#9ab">近${Math.min(50, entries.length)}笔</small></h2>
+      <div class="modal-body" style="max-height:60vh;overflow-y:auto">
+        <div style="display:flex;gap:16px;margin-bottom:8px;font-size:13px">
+          <span style="color:#6dff9a">📈 入 ${formatMoney(income)}</span>
+          <span style="color:#ff8a80">📉 出 ${formatMoney(expense)}</span>
+          <span style="color:#f0c75e">💰 ${formatMoney(player.money)}</span>
+        </div><hr/>${rows}
+      </div>
+      <div class="btn-row"><button data-close>关 闭</button></div>`);
+    this.el.modalBox.querySelector('[data-close]').onclick = () => this.closeModal();
   }
 
   /**

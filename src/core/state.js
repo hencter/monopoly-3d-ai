@@ -195,6 +195,12 @@ export class GameState {
   }
 
   // ---------- 移动 ----------
+  recordTransaction(player, amount, reason) {
+    if (!player.ledger) player.ledger = [];
+    player.ledger.push({ turn: this.turn, amount, balance: player.money, reason });
+    if (player.ledger.length > 150) player.ledger.splice(0, player.ledger.length - 150);
+  }
+
   moveSteps(player, steps) {
     const from = player.position;
     let to = from + steps;
