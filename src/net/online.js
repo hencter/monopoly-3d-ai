@@ -166,6 +166,10 @@ export async function startOnline(world, ui) {
   cardsBtn.textContent = '🃏 卡牌';
   cardsBtn.disabled = true;
   $('#btn-company').after(cardsBtn);
+  const marketBtn = document.createElement('button');
+  marketBtn.id = 'btn-market';
+  marketBtn.textContent = '🏴 黑市';
+  cardsBtn.after(marketBtn);
 
   const setActing = (on) => {
     acting = on;
@@ -183,6 +187,7 @@ export async function startOnline(world, ui) {
   // 强制启用股市按钮（setButtons 默认 true，这里再兜底）
   if (ui.el.btnStock) ui.el.btnStock.disabled = false;
   cardsBtn.onclick = () => tryOpen('cards', openCards);
+  marketBtn.onclick = () => openBlackMarketOnline();
   $('#btn-trade').onclick = () => tryOpen('invest', openInvest);
   $('#btn-camera').onclick = () => {
     const mode = world.cycleCameraMode();
@@ -278,6 +283,7 @@ export async function startOnline(world, ui) {
       case 'tradeResult': enqueue(() => onTradeResult(m)); break;
       case 'over': enqueue(() => onOver(m)); break;
       case 'error': ui.toast(m.msg); break;
+      case 'marketRefresh': renderMirror(); if (panelOpen === 'bmarket') renderBlackMarket(); break;
     }
   };
   ws.onclose = () => {
@@ -491,7 +497,8 @@ export async function startOnline(world, ui) {
     else if (panelOpen === 'bank') renderBank();
     else if (panelOpen === 'company') renderCompanyOnline();
     else if (panelOpen === 'cards') renderCards();
-    else if (panelOpen === 'stock') renderStock();
+    else     if (panelOpen === 'stock') renderStock();
+    if (panelOpen === 'bmarket') renderBlackMarket();
     else if (panelOpen === 'invest') renderInvest();
   }
 
@@ -776,6 +783,72 @@ export async function startOnline(world, ui) {
       <div class="btn-row"><button class="primary" data-close>关 闭</button></div>`);
     modalBox().querySelectorAll('[data-card]').forEach(b => b.onclick = () => useCard(b.dataset.card));
     bindClose();
+  }
+
+  function openBlackMarketOnline() { panelOpen = 'bmarket'; renderBlackMarket(); }
+  function renderBlackMarket() {
+    if (!mirror) return;
+    const p = me();
+    const market = mirror.blackMarket || [];
+    const total = mirror.countItems?.(p) || 0;
+    const room = Math.max(0, 10 - total);
+    const myListings = market.filter(e => e.sellerId === mySeat);
+    const otherListings = market.filter(e => e.sellerId !== mySeat);
+    const pending = p.pendingListings || [];
+
+    const basePrice = (item) => 100000;
+    const row = (e, isMine) => {
+      const seller = mirror.players[e.sellerId] || { name: '???' };
+      const meta = ITEMS[e.item] || { icon: '🃏', name: e.item };
+      return `<div class="panel-row">
+        <span class="grow">${meta.icon} ${meta.name} · ${seller.name} · <b style="color:var(--gold)">${formatMoney(e.price)}</b></span>
+        ${isMine
+          ? `<button data-bm="unlist" data-id="${e.id}" ${room <= 0 ? 'disabled' : ''}>下架</button>`
+          : `<button data-bm="buy" data-id="${e.id}" ${room <= 0 ? 'disabled' : ''}>买入</button>`}
+      </div>`;
+    };
+
+    const pendingRows = pending.length
+      ? pending.map((item, idx) => {
+        const meta = ITEMS[item] || { icon: '🃏', name: item };
+        const base = basePrice(item);
+        return `<div class="panel-row">
+          <span class="grow">📦 待定价：${meta.icon} ${meta.name} · 参考 ${formatMoney(base)}</span>
+          <button data-bm="price" data-idx="${idx}" data-item="${item}" data-val="${Math.round(base*0.5)}">½</button>
+          <button data-bm="price" data-idx="${idx}" data-item="${item}" data-val="${base}">1×</button>
+          <button data-bm="price" data-idx="${idx}" data-item="${item}" data-val="${Math.round(base*2)}">2×</button>
+        </div>`;
+      }).join('')
+      : '';
+
+    openModal(`
+      <h2>🏴 卡牌黑市 <small style="color:#9ab">手牌 ${total}/10 · 可买入 ${room} 张</small></h2>
+      <div class="modal-body" style="max-height:60vh;overflow-y:auto">
+        ${pending.length
+          ? `<h3 style="margin:8px 0 4px;color:#f0c75e">📦 待定价（${pending.length} 张）</h3>${pendingRows}<hr/>`
+          : ''}
+        ${myListings.length
+          ? `<h3 style="margin:8px 0 4px;color:#9fd4ff">我的挂牌（${myListings.length}）</h3>${myListings.map(e => row(e, true)).join('')}`
+          : '<p class="muted">你还没有在售卡牌</p>'}
+        <hr/>
+        <h3 style="margin:8px 0 4px;color:#6dff9a">在售卡牌（${otherListings.length}）</h3>
+        ${otherListings.length
+          ? otherListings.map(e => row(e, false)).join('')
+          : '<p class="muted">暂无其他玩家挂售</p>'}
+        ${room <= 0 ? '<p class="muted" style="color:#ff8a80">⚠️ 手牌已满，无法买入或下架</p>' : ''}
+      </div>
+      <div class="btn-row"><button class="primary" data-close>关 闭</button></div>`);
+
+    bindClose();
+    modalBox().querySelectorAll('[data-bm="buy"]').forEach(b => {
+      b.onclick = () => send({ t: 'op', op: 'buyCard', listingId: +b.dataset.id });
+    });
+    modalBox().querySelectorAll('[data-bm="unlist"]').forEach(b => {
+      b.onclick = () => send({ t: 'op', op: 'unlistCard', listingId: +b.dataset.id });
+    });
+    modalBox().querySelectorAll('[data-bm="price"]').forEach(b => {
+      b.onclick = () => send({ t: 'op', op: 'listCard', item: b.dataset.item, price: +b.dataset.val });
+    });
   }
 
   /** 卡牌目标选择流程 */
