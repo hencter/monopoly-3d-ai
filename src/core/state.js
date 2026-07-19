@@ -1011,7 +1011,6 @@ export class GameState {
     n = Math.max(1, n | 0);
     if (!founder?.company || investor.bankrupt || founder.bankrupt) return false;
     if (investor.id === founder.id) return false;
-    if ((investor.items?.charter || 0) < 1) return false;
     normalizeCompany(founder.company, founder.id);
     const price = this.companySharePrice(founder) * n;
     if (investor.money < price) return false;
@@ -1022,7 +1021,6 @@ export class GameState {
   investCompany(investor, founder, n = 1, fromFloat = false) {
     n = Math.max(1, n | 0);
     if (!this.canInvestCompany(investor, founder, n, fromFloat)) return null;
-    investor.items.charter = (investor.items.charter || 0) - 1;
     const c = founder.company;
     normalizeCompany(c, founder.id);
     const unit = this.companySharePrice(founder);
