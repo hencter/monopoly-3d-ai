@@ -795,6 +795,7 @@ export class GameState {
     if (this.houses[tileIdx] >= MAX_HOUSES) return false;
     if ((player.noBuildTurns || 0) > 0) return false;
     if (!player.rushBuild && (player.items?.permit || 0) < 1) return false;
+    if ((player.stamina || 0) < STAMINA_BUILD) return false;
     return player.money >= t.houseCost;
   }
 

@@ -338,11 +338,11 @@ export async function startOnline(world, ui) {
   function onRoundStart(m) {
     currentRound = m.round;
     myRoundEnded = false;
+    if (m.state) { mirror = revive(m.state); renderMirror(); }
     const me = () => mirror.players[mySeat];
     const myP = me();
     ui.setTurnInfo(`🔄 第 ${m.round + 1} 回合 · 同步行动中 · 体力 ${myP ? (myP.stamina || 0) : '?'}/${STAMINA_MAX}`);
     setActing(true);
-    myRoundEnded = false;
     const staminaOk = myP && (myP.stamina || 0) >= STAMINA_DICE;
     ui.setButtons({ roll: staminaOk && !myRoundEnded, end: true, build: true, bank: true, trade: true, company: true, stock: true });
     if (myP && (myP.stamina || 0) > 0) {
@@ -370,6 +370,7 @@ export async function startOnline(world, ui) {
   }
 
   function onPlayerEnded(m) {
+    if (m.state) { mirror = revive(m.state); renderMirror(); }
     const p = mirror.players[m.seat];
     if (p) {
       ui.log(`🏁 ${p.name} 已结束回合（体力 ${m.stamina}/${STAMINA_MAX}）`, 'muted');
@@ -391,11 +392,14 @@ export async function startOnline(world, ui) {
       world.setFollow(m.playerId);
       ui.setTurnInfo(`🎯 ${p ? p.name : ''} 同步行动中`);
       if (m.playerId === mySeat) {
+        setActing(true);
         ui.setButtons({ roll: (me().stamina || 0) >= STAMINA_DICE, build: true, bank: true, trade: true, company: true, stock: true });
+      } else {
+        setActing(false);
       }
-      setActing(false);
       ui.el.itemBar.innerHTML = '';
       ui.renderPlayers(mirror, activeId);
+      updateStaminaBars();
     } else if (m.name === 'waitRoll' && m.playerId !== mySeat) {
       world.clearHandCards();
       ui.setTurnInfo(`⏳ ${p ? p.name : '对手'} 行动中… · 可点「股市」观战行情`);

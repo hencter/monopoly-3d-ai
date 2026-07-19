@@ -45,6 +45,7 @@ function serializeState(g, round = 0) {
     newsMult: g.newsMult,
     kline: g.kline,
     newsBoard: g.newsBoard,
+    blackMarket: g.blackMarket,
     chanceDeck: g.chanceDeck,
     chestDeck: g.chestDeck,
     turn: g.turn,
@@ -622,11 +623,13 @@ function aiEndTurnOps(room, p) {
   const g = room.game;
   if (p.bankrupt) return;
   // 银行
-  if (p.money < ttc(160) && g.creditLimit(p) - p.debt >= ttc(300)) {
+  if ((p.stamina || 0) >= STAMINA_BANK && p.money < ttc(160) && g.creditLimit(p) - p.debt >= ttc(300)) {
+    p.stamina = Math.max(0, (p.stamina || 0) - STAMINA_BANK);
     g.borrow(p, ttc(300));
     room.log(`${p.name} 向银行贷款 ${formatMoney(ttc(300))}`, 'card');
   }
-  if (p.debt > 0 && p.money > ttc(800)) {
+  if ((p.stamina || 0) >= STAMINA_BANK && p.debt > 0 && p.money > ttc(800)) {
+    p.stamina = Math.max(0, (p.stamina || 0) - STAMINA_BANK);
     const r = g.repay(p, p.debt);
     if (r > 0) room.log(`${p.name} 偿还贷款 ${formatMoney(r)}`);
   }
@@ -643,29 +646,39 @@ function aiEndTurnOps(room, p) {
     room.log(`${p.name} 消耗建设卡，在 ${TILES[c[0]].name} 起了一级楼`, 'good');
   }
   // 公司（需公司卡）
-  if (g.canFoundCompany(p) && p.money > ttc(900)) {
-    const keys = Object.keys(INDUSTRIES).filter(k => k !== 'railroad' && k !== 'utility');
-    const fav = room.brain.personaOf(p).favIndustry?.find(k => keys.includes(k));
-    const ind = fav || keys[Math.floor(g.rng() * keys.length)];
-    if (g.foundCompany(p, ind)) {
-      room.log(`${p.name} 消耗公司卡，创办了 ${INDUSTRIES[ind].icon}${INDUSTRIES[ind].name} 公司！`, 'good');
-    }
-  } else if (g.canUpgradeCompany(p) && p.money > ttc(900) && g.rng() < 0.6) {
-    if (g.upgradeCompany(p)) {
-      room.log(`${p.name} 消耗公司卡，公司升到 Lv${p.company.level}`, 'good');
+  if ((p.stamina || 0) >= STAMINA_COMPANY) {
+    if (g.canFoundCompany(p) && p.money > ttc(900)) {
+      const keys = Object.keys(INDUSTRIES).filter(k => k !== 'railroad' && k !== 'utility');
+      const fav = room.brain.personaOf(p).favIndustry?.find(k => keys.includes(k));
+      const ind = fav || keys[Math.floor(g.rng() * keys.length)];
+      if (g.foundCompany(p, ind)) {
+        p.stamina = Math.max(0, (p.stamina || 0) - STAMINA_COMPANY);
+        room.log(`${p.name} 消耗公司卡，创办了 ${INDUSTRIES[ind].icon}${INDUSTRIES[ind].name} 公司！`, 'good');
+      }
+    } else if (g.canUpgradeCompany(p) && p.money > ttc(900) && g.rng() < 0.6) {
+      if (g.upgradeCompany(p)) {
+        p.stamina = Math.max(0, (p.stamina || 0) - STAMINA_COMPANY);
+        room.log(`${p.name} 消耗公司卡，公司升到 Lv${p.company.level}`, 'good');
+      }
     }
   }
   // IPO / 入股
-  if (g.canIPO(p) && p.money < ttc(900) && g.rng() < 0.5) {
+  if ((p.stamina || 0) >= STAMINA_COMPANY && g.canIPO(p) && p.money < ttc(900) && g.rng() < 0.5) {
     const r = g.doIPO(p);
-    if (r) room.log(`${p.name} 公司 IPO，套现 ${formatMoney(r.raised)}`, 'good');
+    if (r) {
+      p.stamina = Math.max(0, (p.stamina || 0) - STAMINA_COMPANY);
+      room.log(`${p.name} 公司 IPO，套现 ${formatMoney(r.raised)}`, 'good');
+    }
   }
-  if (p.money > ttc(500)) {
+  if ((p.stamina || 0) >= STAMINA_INVEST && p.money > ttc(500)) {
     for (const f of g.players) {
       if (f.id === p.id || f.bankrupt || !f.company) continue;
       if (g.canInvestCompany(p, f, 1, true) || g.canInvestCompany(p, f, 1, false)) {
         const r = g.investCompany(p, f, 1, g.canInvestCompany(p, f, 1, true));
-        if (r) { room.log(`${p.name} 入股 ${f.name} 公司 1 手（${formatMoney(r.cost)}）`, 'good'); break; }
+        if (r) {
+          p.stamina = Math.max(0, (p.stamina || 0) - STAMINA_INVEST);
+          room.log(`${p.name} 入股 ${f.name} 公司 1 手（${formatMoney(r.cost)}）`, 'good'); break;
+        }
       }
     }
   }
@@ -676,6 +689,8 @@ function aiEndTurnOps(room, p) {
       .sort((a, b) => g.sellStockPrice(b) - g.sellStockPrice(a));
     for (const k of held) {
       if (stockOps >= 2 || p.money >= ttc(280)) break;
+      if ((p.stamina || 0) < STAMINA_STOCK) break;
+      p.stamina = Math.max(0, (p.stamina || 0) - STAMINA_STOCK);
       const r = g.sellStock(p, k, 1);
       if (r) {
         room.log(`${p.name} 卖出 ${INDUSTRIES[k].icon}${INDUSTRIES[k].name} 股票 1 手（+${formatMoney(r.gain)}）`, 'card');
@@ -690,6 +705,8 @@ function aiEndTurnOps(room, p) {
     for (const k of cands) {
       if (stockOps >= 3 || p.money < ttc(450)) break;
       if (p.money - g.stockPrice(k) < ttc(250)) continue;
+      if ((p.stamina || 0) < STAMINA_STOCK) break;
+      p.stamina = Math.max(0, (p.stamina || 0) - STAMINA_STOCK);
       const r = g.buyStock(p, k, 1);
       if (r) {
         room.log(`${p.name} 买入 ${INDUSTRIES[k].icon}${INDUSTRIES[k].name} 股票 1 手（${formatMoney(r.cost)}）`, 'good');
@@ -741,6 +758,10 @@ function handleOp(room, seat, msg) {
       room.update();
       if ((p.stamina || 0) <= 0 && !room.roundEnded.has(seat)) {
         room.log(`${p.name} 体力耗尽，自动结束回合`, 'muted');
+        room.roundEnded.add(seat);
+        room._checkRoundEnd();
+      }
+      if (p.bankrupt && !room.roundEnded.has(seat)) {
         room.roundEnded.add(seat);
         room._checkRoundEnd();
       }
