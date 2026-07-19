@@ -142,6 +142,22 @@ export class Engine {
     }
     this.a.update();
 
+    // 催收：连续欠债 3 回合强制拍卖地产
+    if (p.debt > 0) {
+      p._debtTurns = (p._debtTurns || 0) + 1;
+      if (p._debtTurns >= 3) {
+        const props = this.g.playerProperties(p.id);
+        if (props.length) {
+          const i = props[Math.floor(this.g.rng() * props.length)];
+          this.a.log(`🚨 催收！${this._tag(p)} 连续欠债 ${p._debtTurns} 回合，${TILES[i].name} 被强制拍卖`, 'bad');
+          this.g.forcePay(p, TILES[i].price, null);
+        }
+        p._debtTurns = 0;
+      }
+    } else {
+      p._debtTurns = 0;
+    }
+
     let doublesCount = 0;
     while (true) {
       if (p.inJail) {
@@ -173,10 +189,12 @@ export class Engine {
         this.a.log(`${this._tag(p)} 使用 🎯遥控骰子，指定点数 <b>${d1}</b>`, 'good');
         this.a.onItemCast?.(p, 'remote');
       } else {
-        // 掷骰收费
+        // 掷骰费随回合递增
         if (action && action.type !== 'remote') {
-          const dr = this.g.forcePay(p, DICE_COST, null);
-          if (dr.paid > 0) this.a.log(`${this._tag(p)} 支付掷骰费 ${formatMoney(dr.paid)}`, 'bad');
+          const round = Math.floor(this.g.turn / Math.max(1, this.g.alivePlayers().length));
+          const diceFee = DICE_COST + round * ttc(2);
+          const dr = this.g.forcePay(p, diceFee, null);
+          if (dr.paid > 0) this.a.log(`${this._tag(p)} 支付掷骰费 ${formatMoney(dr.paid)}（第${round}轮）`, 'bad');
           if (dr.bankrupt) { this.a.log(`${this._tag(p)} 付不起掷骰费，破产！`, 'bad'); return; }
         }
         boost = !!(action && action.boost);

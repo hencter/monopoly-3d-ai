@@ -1099,7 +1099,7 @@ export class GameState {
    * @returns null | { fine, reason }
    */
   regulatorAudit(player, rng = this.rng) {
-    if (player.bankrupt || rng() > 0.18) return null;
+    if (player.bankrupt || rng() > 0.30) return null; // 30% 触发率（原18%）
     let fine = 0;
     let reason = '';
     if (player.debt > ttc(800) && player.money < player.debt * 0.3) {
