@@ -12,6 +12,15 @@
   <!-- 玩家面板 -->
   <div id="players" class="hidden"></div>
 
+  <!-- 黑市侧边滑出面板 -->
+  <div id="black-market" class="hidden">
+    <div class="black-market-head">
+      <div class="black-market-title">🏴 卡牌黑市</div>
+      <button class="black-market-close" title="关闭黑市">✕</button>
+    </div>
+    <div class="black-market-body" id="black-market-body"></div>
+  </div>
+
   <!-- 行业景气条 -->
   <div id="industries" class="hidden"></div>
 
@@ -86,28 +95,29 @@
         <button id="btn-end" class="hud-end">结束回合 ➜</button>
       </div>
       <div class="btn-grid" id="item-bar"></div>
+      <div class="alert-strip hidden" id="alert-strip"></div>
     </div>
   </div>
 
   <!-- 玩家留言：视频式横向弹幕层（右→左） -->
   <div id="chat-danmaku-layer" class="hidden" aria-live="polite"></div>
 
-  <!-- 聊天面板（输入 + 历史） -->
-  <div id="chat-wrap" class="hidden">
-    <div id="chat-log"></div>
-    <div id="chat-input-row">
-      <input id="chat-input" maxlength="50" placeholder="和 AI 对手聊聊…" />
-      <button id="chat-send">发送</button>
+  <!-- 右侧固定面板（操作记录 + 聊天） -->
+  <div id="right-panel" class="hidden">
+    <div id="log-wrap">
+      <div class="log-panel">
+        <div class="log-panel-title">📋 操作记录</div>
+        <div id="log" class="log-history"></div>
+      </div>
+      <div id="danmaku-layer" aria-live="polite"></div>
     </div>
-  </div>
-
-  <!-- 操作记录（右上）+ 战报弹幕层（中左） -->
-  <div id="log-wrap" class="hidden">
-    <div class="log-panel">
-      <div class="log-panel-title">📋 操作记录</div>
-      <div id="log" class="log-history"></div>
+    <div id="chat-wrap">
+      <div id="chat-log"></div>
+      <div id="chat-input-row">
+        <input id="chat-input" maxlength="50" placeholder="和 AI 对手聊聊…" />
+        <button id="chat-send">发送</button>
+      </div>
     </div>
-    <div id="danmaku-layer" aria-live="polite"></div>
   </div>
 
   <!-- 格子信息卡 -->

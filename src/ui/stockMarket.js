@@ -400,6 +400,7 @@ export function openStockMarket(game, player, onChange, ui = {}, hooks = {}, opt
       const prev = kdata.length > 1 ? kdata[kdata.length - 2].close : price;
       const last = kdata.length ? kdata[kdata.length - 1].close : price;
       const up = last >= prev;
+      const pct = prev > 0 ? ((last - prev) / prev) * 100 : 0;
       const qtyMax = Math.max(maxB, maxS, maxSO, maxSC, 1);
       const opts = qtyOptions(qtyMax);
       const roomMkt = Math.max(0, MAX_MARKET_SHARES - total);
@@ -413,6 +414,7 @@ export function openStockMarket(game, player, onChange, ui = {}, hooks = {}, opt
           <b>${ind.icon} ${ind.name}</b>
           <span class="tag">${st.icon}${st.name}</span>
           <span class="stock-card-price ${up ? 'up' : 'down'}">${formatMoney(price)} ${up ? '▲' : '▼'}</span>
+          <span class="change-pct ${pct >= 0 ? 'up' : 'down'}">${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%</span>
         </div>
         <div class="stock-card-chart" data-key="${key}"></div>
         <div class="stock-card-meta">

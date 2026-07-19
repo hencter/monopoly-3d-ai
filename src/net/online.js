@@ -3,7 +3,7 @@
 import {
   GameState, TILES, INDUSTRIES, INDUSTRY_STATES, STOCK_INDUSTRIES,
   COMPANY_FOUND_COST, COMPANY_MAX_LEVEL, companyUpgradeCost,
-  formatMoney, ttc, GO_SALARY,
+  formatMoney, ttc, GO_SALARY, STAMINA_MAX, STAMINA_DICE,
 } from '../core/state.js';
 import { ITEMS, MAX_SHARES_PER_IND, HAND_CAP } from '../data/tiles.js';
 import { PLAYER_COLORS, PLAYER_COLORS_CSS } from '../three/world.js';
@@ -149,9 +149,11 @@ export async function startOnline(world, ui) {
 
   let mirror = revive(begin.state);
   let activeId = -1;
-  let acting = false;          // 我的可操作窗口（ask roll / endTurn 期间）
+  let acting = false;
+  let myRoundEnded = false;
+  let currentRound = begin.state.round || 0;
   const deadTokens = new Set();
-  let panelOpen = null;        // 当前打开的联机面板名
+  let panelOpen = null;
   let over = false;
 
   world.setPlayerCount(begin.roster.length);
@@ -175,21 +177,43 @@ export async function startOnline(world, ui) {
   const setActing = (on) => {
     acting = on;
     cardsBtn.disabled = !on;
+    marketBtn.disabled = !on;
   };
   const tryOpen = (name, fn) => {
-    if (!acting || ui.modalOpen || over) return;
+    if ((!acting || myRoundEnded) && name !== 'stock') return;
+    if (ui.modalOpen || over) return;
     fn();
   };
   $('#btn-build').onclick = () => tryOpen('build', openBuild);
   $('#btn-bank').onclick = () => tryOpen('bank', openBank);
   $('#btn-company').onclick = () => tryOpen('company', openCompanyOnline);
-  // 股市：随时可看全场行情；仅 acting（自己操作窗口）时可买卖
-  $('#btn-stock')?.addEventListener('click', () => openStock(!!acting));
-  // 强制启用股市按钮（setButtons 默认 true，这里再兜底）
+  $('#btn-stock')?.addEventListener('click', () => openStock(!!acting && !myRoundEnded));
   if (ui.el.btnStock) ui.el.btnStock.disabled = false;
   cardsBtn.onclick = () => tryOpen('cards', openCards);
   marketBtn.onclick = () => openBlackMarketOnline();
   $('#btn-trade').onclick = () => tryOpen('invest', openInvest);
+
+  ui.el.btnRoll.textContent = '🎲 掷骰';
+  ui.el.btnRoll.onclick = () => {
+    if (myRoundEnded || !acting) return;
+    ui.el.btnRoll.disabled = true;
+    send({ t: 'roll' });
+    ui.toast('掷骰已发送…', 800);
+  };
+  ui.el.btnEnd.textContent = '✅ 结束回合';
+  ui.el.btnEnd.onclick = () => {
+    if (myRoundEnded) return;
+    myRoundEnded = true;
+    send({ t: 'endRound' });
+    world.clearHandCards();
+    ui.setButtons({ stock: true, roll: false });
+    setActing(false);
+    ui.el.itemBar.innerHTML = '';
+    ui.setTurnInfo('⏳ 已结束回合，等待其他玩家…');
+    if (panelOpen === 'stock') stockUi?.refresh?.();
+    else if (panelOpen === 'invest') investUi?.refresh?.();
+    else if (panelOpen) { closeModal(); panelOpen = null; }
+  };
   $('#btn-camera').onclick = () => {
     const mode = world.cycleCameraMode();
     ui.setCameraLabel(mode);
@@ -220,15 +244,36 @@ export async function startOnline(world, ui) {
       }
     }
     ui.renderPlayers(mirror, activeId);
+    updateStaminaBars();
     ui.renderIndustries(mirror);
     world.syncLivingZones?.(mirror.players, PLAYER_COLORS);
-    // 面板打开时跟随最新镜像重渲染
     if (panelOpen === 'stock') {
       stockUi?.refresh?.();
     } else if (panelOpen) {
       if (ui.modalOpen) rerenderPanel();
       else panelOpen = null;
     }
+  }
+  function updateStaminaBars() {
+    const cards = document.querySelectorAll('.player-card');
+    cards.forEach(el => {
+      const pid = parseInt(el.dataset.pid);
+      const p = mirror.players[pid];
+      if (!p || p.bankrupt) return;
+      let bar = el.querySelector('.stamina-bar');
+      if (!bar) {
+        bar = document.createElement('div');
+        bar.className = 'stamina-bar';
+        bar.style.cssText = 'height:3px;background:rgba(255,255,255,.1);border-radius:2px;margin-top:3px;overflow:hidden';
+        bar.innerHTML = '<div class="stamina-fill" style="height:100%;border-radius:2px;transition:width .3s"></div>';
+        el.querySelector('.pmeta')?.after(bar);
+      }
+      const fill = bar.querySelector('.stamina-fill');
+      const ratio = (p.stamina || 0) / STAMINA_MAX;
+      fill.style.width = `${ratio * 100}%`;
+      fill.style.background = ratio > 0.5 ? '#6dff9a' : ratio > 0.2 ? '#f0c75e' : '#e74c3c';
+      bar.title = `体力 ${p.stamina || 0}/${STAMINA_MAX}`;
+    });
   }
   renderMirror();
   ui.log(`已加入房间 <b>${code}</b>，你是 ${myName}（${mySeat + 1} 号位）`, 'turn');
@@ -257,6 +302,9 @@ export async function startOnline(world, ui) {
         }
         break;
       }
+      case 'roundStart': onRoundStart(m); break;
+      case 'newRound': onNewRound(m); break;
+      case 'playerEnded': onPlayerEnded(m); break;
       case 'phase': onPhase(m); break;
       case 'dice': enqueue(() => world.animateDice(m.d1, m.d2)); break;
       case 'move': enqueue(() => world.moveToken(m.player, m.from, m.steps)); break;
@@ -268,7 +316,6 @@ export async function startOnline(world, ui) {
       case 'card': enqueue(() => ui.showCard(m.card, m.deck, m.player !== mySeat)); break;
       case 'itemCast': enqueue(async () => {
         const pl = mirror.players[m.playerId] || { id: m.playerId, name: m.name || '玩家' };
-        // 自己打出：手牌已播 FX，只高亮列表；其他人：完整出牌特效
         const mine = m.playerId === mySeat;
         await ui.showItemCast?.(pl, m.item, { silent: mine, skipFx: mine });
       }); break;
@@ -287,6 +334,48 @@ export async function startOnline(world, ui) {
       case 'marketRefresh': renderMirror(); if (panelOpen === 'bmarket') renderBlackMarket(); break;
     }
   };
+
+  function onRoundStart(m) {
+    currentRound = m.round;
+    myRoundEnded = false;
+    const me = () => mirror.players[mySeat];
+    const myP = me();
+    ui.setTurnInfo(`🔄 第 ${m.round + 1} 回合 · 同步行动中 · 体力 ${myP ? (myP.stamina || 0) : '?'}/${STAMINA_MAX}`);
+    setActing(true);
+    myRoundEnded = false;
+    const staminaOk = myP && (myP.stamina || 0) >= STAMINA_DICE;
+    ui.setButtons({ roll: staminaOk && !myRoundEnded, end: true, build: true, bank: true, trade: true, company: true, stock: true });
+    if (myP && (myP.stamina || 0) > 0) {
+      ui.toast(`🔄 第 ${m.round + 1} 回合开始！体力 ${myP.stamina}/${STAMINA_MAX}`);
+    } else {
+      ui.toast(`🔄 第 ${m.round + 1} 回合开始！体力不足，等待下回合恢复…`);
+      ui.setButtons({ roll: false, end: true, build: false, bank: false, trade: false, company: false, stock: true });
+    }
+    world.clearHandCards();
+    ui.el.itemBar.innerHTML = '';
+    updateStaminaBars();
+  }
+
+  function onNewRound(m) {
+    if (m.state) { mirror = revive(m.state); renderMirror(); }
+    currentRound = m.round;
+    myRoundEnded = false;
+    const me = () => mirror.players[mySeat];
+    const myP = me();
+    ui.setTurnInfo(`🔄 第 ${m.round + 1} 回合 · 同步行动中 · 体力 ${myP ? (myP.stamina || 0) : '?'}/${STAMINA_MAX}`);
+    setActing(true);
+    const staminaOk = myP && (myP.stamina || 0) >= STAMINA_DICE;
+    ui.setButtons({ roll: staminaOk && !myRoundEnded, end: true, build: true, bank: true, trade: true, company: true, stock: true });
+    updateStaminaBars();
+  }
+
+  function onPlayerEnded(m) {
+    const p = mirror.players[m.seat];
+    if (p) {
+      ui.log(`🏁 ${p.name} 已结束回合（体力 ${m.stamina}/${STAMINA_MAX}）`, 'muted');
+    }
+    updateStaminaBars();
+  }
   ws.onclose = () => {
     if (over) return;
     ui.toast('与服务器断开连接', 5000);
@@ -296,31 +385,28 @@ export async function startOnline(world, ui) {
 
   function onPhase(m) {
     const p = mirror.players[m.playerId];
+    const me = () => mirror.players[mySeat];
     if (m.name === 'turnStart') {
       activeId = m.playerId;
       world.setFollow(m.playerId);
-      ui.setTurnInfo(`🎯 ${p ? p.name : ''} 的回合`);
-      ui.toast(m.playerId === mySeat ? '🎯 轮到你了！' : `轮到 ${p ? p.name : '对手'}`);
-      // 观战阶段仍可看股市；清掉上一轮手牌
-      world.clearHandCards();
-      ui.setButtons({ stock: true });
+      ui.setTurnInfo(`🎯 ${p ? p.name : ''} 同步行动中`);
+      if (m.playerId === mySeat) {
+        ui.setButtons({ roll: (me().stamina || 0) >= STAMINA_DICE, build: true, bank: true, trade: true, company: true, stock: true });
+      }
       setActing(false);
       ui.el.itemBar.innerHTML = '';
       ui.renderPlayers(mirror, activeId);
-      if (panelOpen === 'stock') stockUi?.refresh?.();
-      if (panelOpen === 'invest') investUi?.refresh?.();
     } else if (m.name === 'waitRoll' && m.playerId !== mySeat) {
       world.clearHandCards();
-      ui.setTurnInfo(`⏳ ${p ? p.name : '对手'} 掷骰中… · 可点「股市」观战行情`);
+      ui.setTurnInfo(`⏳ ${p ? p.name : '对手'} 行动中… · 可点「股市」观战行情`);
       ui.setButtons({ stock: true });
     } else if (m.name === 'endTurn' && m.playerId !== mySeat) {
       world.clearHandCards();
-      ui.setTurnInfo(`⏳ ${p ? p.name : '对手'} 回合收尾… · 可点「股市」观战行情`);
+      ui.setTurnInfo(`⏳ ${p ? p.name : '对手'} 操作中… · 可点「股市」观战行情`);
       ui.setButtons({ stock: true });
     }
   }
 
-  // ---------- 问答 ----------
   async function onAsk(m) {
     const me = () => mirror.players[mySeat];
     switch (m.kind) {
@@ -339,112 +425,17 @@ export async function startOnline(world, ui) {
         send({ t: 'resp', reqId: m.reqId, value: yes });
         break;
       }
-      case 'roll': {
-        const action = await rollUI(me());
-        send({ t: 'resp', reqId: m.reqId, value: action });
-        break;
-      }
-      case 'endTurn': {
-        await endTurnUI(me());
-        send({ t: 'resp', reqId: m.reqId, value: null });
-        break;
-      }
       case 'bankPledge': {
         const yes = await ui.promptBankPledge(me(), { shares: m.shares || 5, loan: m.loan || 40 });
         send({ t: 'resp', reqId: m.reqId, value: !!yes });
         break;
       }
-      case 'trade': { // 兼容旧协议
+      case 'trade': {
         const accept = await incomingTradeUI(m);
         send({ t: 'tradeResp', reqId: m.reqId, accept });
         break;
       }
     }
-  }
-
-  /** 掷骰阶段：3D 手牌（remote/boost）+ 操作秒数房租计时 */
-  function rollUI(p) {
-    return new Promise((resolve) => {
-      ui.setTurnInfo(`${p.name}：请掷骰子 · 点下方手牌使用道具 · ⏱️房租按秒计`);
-      ui.setButtons({ roll: true, build: true, bank: true, trade: true, company: true, stock: true });
-      setActing(true);
-      const stopRent = ui.startRentMeter({
-        waived: !!(mirror.hasHousing?.(p) || (p && mirror.playerProperties?.(mySeat)?.some(i => TILES[i]?.type === 'property'))),
-      });
-      let boost = false;
-      const bar = ui.el.itemBar;
-      bar.innerHTML = '';
-
-      const bindHand = () => {
-        world.setHandCards(p.items, 'roll', async (item) => {
-          if (item === 'remote') {
-            const n = await ui.askNumber('🎯 遥控骰子：选择点数', 1, 6);
-            if (n != null) done({ type: 'remote', total: n });
-          } else if (item === 'boost') {
-            boost = !boost;
-            ui.toast(boost ? '🚀 加速卡已激活：本次 +3 步' : '已取消加速卡');
-            bindHand();
-          }
-        });
-      };
-      bindHand();
-
-      const done = (action) => {
-        const opSeconds = stopRent();
-        world.clearHandCards();
-        bar.innerHTML = '';
-        ui.el.btnRoll.onclick = null;
-        ui.setButtons({ stock: true });
-        setActing(false);
-        resolve({ ...action, boost: action.type === 'roll' ? boost : action.boost, opSeconds });
-      };
-      ui.el.btnRoll.onclick = () => done({ type: 'roll', boost });
-    });
-  }
-
-  /** 回合收尾：3D 手牌出牌 + 建设/股市/入股/付费抽牌或结束回合 */
-  function endTurnUI(p) {
-    ui.setTurnInfo(`${p.name}：可建设/股市/入股/抽牌 · 点下方手牌出牌 · 或结束回合`);
-    setActing(true);
-    const syncDraw = () => {
-      const cur = me();
-      const can = mirror.canPaidDraw?.(cur);
-      const left = Math.max(0, 3 - (cur.paidDrawsUsed || 0));
-      ui.setButtons({
-        end: true, build: true, bank: true, trade: true, company: true, stock: true, draw: !!can,
-      });
-      ui.setDrawLabel(can ? `🃏 抽牌(${left})` : '🃏 抽牌');
-    };
-    const refreshHand = () => {
-      const cur = me();
-      world.setHandCards(cur.items, 'endTurn', async (item) => {
-        closeModal();
-        panelOpen = null;
-        useCard(item);
-        setTimeout(() => { if (acting) { refreshHand(); syncDraw(); } }, 120);
-      });
-    };
-    refreshHand();
-    syncDraw();
-    if (ui.el.btnDraw) {
-      ui.el.btnDraw.onclick = () => {
-        if (!mirror.canPaidDraw?.(me())) {
-          ui.toast('无法抽牌（现金不足或次数用尽）');
-          return;
-        }
-        send({ t: 'op', op: 'drawPack', mode: 'paid' });
-        setTimeout(() => { if (acting) { refreshHand(); syncDraw(); } }, 100);
-      };
-    }
-    return ui.waitButton('end').then(() => {
-      if (ui.el.btnDraw) ui.el.btnDraw.onclick = null;
-      world.clearHandCards();
-      ui.setButtons({ stock: true });
-      setActing(false);
-      if (panelOpen === 'stock') stockUi?.refresh?.();
-      else if (panelOpen === 'invest') investUi?.refresh?.();
-      else if (panelOpen) { closeModal(); panelOpen = null; }
-    });
   }
 
   /** 人类卖方收到的要约 */
@@ -789,6 +780,22 @@ export async function startOnline(world, ui) {
   function openBlackMarketOnline() { panelOpen = 'bmarket'; renderBlackMarket(); }
   function renderBlackMarket() {
     if (!mirror) return;
+    const panel = document.getElementById('black-market');
+    const body = document.getElementById('black-market-body');
+    const closeBtn = panel?.querySelector('.black-market-close');
+    if (!panel || !body) return;
+    panel.classList.remove('hidden');
+
+    const closePanel = () => {
+      panel.classList.add('hidden');
+      panelOpen = null;
+      if (closeBtn) closeBtn.onclick = null;
+    };
+    if (closeBtn) closeBtn.onclick = closePanel;
+    // Esc 键关闭
+    const onEsc = (e) => { if (e.key === 'Escape') { closePanel(); window.removeEventListener('keydown', onEsc); } };
+    window.addEventListener('keydown', onEsc);
+
     const p = me();
     const market = mirror.blackMarket || [];
     const total = mirror.countItems?.(p) || 0;
@@ -797,7 +804,6 @@ export async function startOnline(world, ui) {
     const otherListings = market.filter(e => e.sellerId !== mySeat);
     const pending = p.pendingListings || [];
 
-    const basePrice = (item) => 100000;
     const row = (e, isMine) => {
       const seller = mirror.players[e.sellerId] || { name: '???' };
       const meta = ITEMS[e.item] || { icon: '🃏', name: e.item };
@@ -812,7 +818,7 @@ export async function startOnline(world, ui) {
     const pendingRows = pending.length
       ? pending.map((item, idx) => {
         const meta = ITEMS[item] || { icon: '🃏', name: item };
-        const base = basePrice(item);
+        const base = 100000;
         return `<div class="panel-row">
           <span class="grow">📦 待定价：${meta.icon} ${meta.name} · 参考 ${formatMoney(base)}</span>
           <button data-bm="price" data-idx="${idx}" data-item="${item}" data-val="${Math.round(base*0.5)}">½</button>
@@ -822,33 +828,38 @@ export async function startOnline(world, ui) {
       }).join('')
       : '';
 
-    openModal(`
-      <h2>🏴 卡牌黑市 <small style="color:#9ab">手牌 ${total}/10 · 可买入 ${room} 张</small></h2>
-      <div class="modal-body" style="max-height:60vh;overflow-y:auto">
-        ${pending.length
-          ? `<h3 style="margin:8px 0 4px;color:#f0c75e">📦 待定价（${pending.length} 张）</h3>${pendingRows}<hr/>`
-          : ''}
-        ${myListings.length
-          ? `<h3 style="margin:8px 0 4px;color:#9fd4ff">我的挂牌（${myListings.length}）</h3>${myListings.map(e => row(e, true)).join('')}`
-          : '<p class="muted">你还没有在售卡牌</p>'}
-        <hr/>
-        <h3 style="margin:8px 0 4px;color:#6dff9a">在售卡牌（${otherListings.length}）</h3>
-        ${otherListings.length
-          ? otherListings.map(e => row(e, false)).join('')
-          : '<p class="muted">暂无其他玩家挂售</p>'}
-        ${room <= 0 ? '<p class="muted" style="color:#ff8a80">⚠️ 手牌已满，无法买入或下架</p>' : ''}
+    body.innerHTML = `
+      <div class="bm-section">
+        <div class="bm-info">手牌 <b style="color:var(--gold)">${total}</b>/10 · 可买入 <b style="color:#6dff9a">${room}</b> 张</div>
+        ${room <= 0 ? '<div class="bm-warn">⚠️ 手牌已满，无法买入或下架</div>' : ''}
       </div>
-      <div class="btn-row"><button class="primary" data-close>关 闭</button></div>`);
+      ${pending.length
+        ? `<div class="bm-section">
+          <h3 style="color:#f0c75e">📦 待定价（${pending.length} 张）</h3>
+          ${pendingRows}
+        </div>`
+        : ''}
+      ${myListings.length
+        ? `<div class="bm-section">
+          <h3 style="color:#9fd4ff">我的挂牌（${myListings.length}）</h3>
+          ${myListings.map(e => row(e, true)).join('')}
+        </div>`
+        : '<div class="bm-section"><p class="muted">你还没有在售卡牌</p></div>'}
+      ${otherListings.length
+        ? `<div class="bm-section">
+          <h3 style="color:#6dff9a">在售卡牌（${otherListings.length}）</h3>
+          ${otherListings.map(e => row(e, false)).join('')}
+        </div>`
+        : '<div class="bm-section"><p class="muted">暂无其他玩家挂售</p></div>'}`;
 
-    bindClose();
-    modalBox().querySelectorAll('[data-bm="buy"]').forEach(b => {
-      b.onclick = () => send({ t: 'op', op: 'buyCard', listingId: +b.dataset.id });
+    body.querySelectorAll('[data-bm="buy"]').forEach(b => {
+      b.onclick = () => { send({ t: 'op', op: 'buyCard', listingId: +b.dataset.id }); };
     });
-    modalBox().querySelectorAll('[data-bm="unlist"]').forEach(b => {
-      b.onclick = () => send({ t: 'op', op: 'unlistCard', listingId: +b.dataset.id });
+    body.querySelectorAll('[data-bm="unlist"]').forEach(b => {
+      b.onclick = () => { send({ t: 'op', op: 'unlistCard', listingId: +b.dataset.id }); };
     });
-    modalBox().querySelectorAll('[data-bm="price"]').forEach(b => {
-      b.onclick = () => send({ t: 'op', op: 'listCard', item: b.dataset.item, price: +b.dataset.val });
+    body.querySelectorAll('[data-bm="price"]').forEach(b => {
+      b.onclick = () => { send({ t: 'op', op: 'listCard', item: b.dataset.item, price: +b.dataset.val }); };
     });
   }
 

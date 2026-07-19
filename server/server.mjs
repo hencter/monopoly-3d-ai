@@ -1,28 +1,45 @@
-// 联机对战权威服务器：房间制 + WebSocket（ws@8）
-// 规则全部在服务端 GameState/Engine 上执行，客户端只做表现与输入转发。
+// 联机对战权威服务器：同步回合制 + WebSocket（ws@8）
+// 规则全部在服务端 GameState 上执行，客户端只做表现与输入转发。
+// 同一回合内所有存活玩家并发操作，体力耗尽或主动声明后进入下一回合。
 // 运行：node server/server.mjs （环境变量 PORT 指定端口，默认 8081；DF_FAST=1 加快节奏，供仿真测试用）
 import { WebSocketServer } from 'ws';
-import { GameState, TILES, INDUSTRIES, ITEMS, formatMoney, ttc, GO_SALARY, MONEY_SCALE } from '../src/core/state.js';
+import {
+  GameState, TILES, INDUSTRIES, ITEMS, formatMoney, ttc, GO_SALARY,
+  STAMINA_DICE, STAMINA_BUY_LAND, STAMINA_BUILD,
+  PARKING_DRAW_N, BUY_LAND_DRAW_CHANCE,
+  LOTTERY_COST, LOTTERY_JACKPOT, LOTTERY_WIN_CHANCE,
+  HOSPITAL_FEE, JAIL_INDEX, JAIL_FINE,
+} from '../src/core/state.js';
 import { Engine } from '../src/core/engine.js';
 import { AIBrain, PERSONAS } from '../src/llm/ai.js';
 
 const PORT = Number(process.env.PORT || 8081);
-const FAST = !!process.env.DF_FAST;          // 测试模式：动画/思考延时缩短为 1/4
+const FAST = !!process.env.DF_FAST;
 const SPEED = FAST ? 4 : 1;
-const ASK_TIMEOUT = 60_000;                  // 人类玩家应答超时（超时用默认值）
+const ASK_TIMEOUT = 60_000;
 const MAX_SEATS = 34;
+
+const STAMINA_CARD = 5;
+const STAMINA_BANK = 5;
+const STAMINA_STOCK = 5;
+const STAMINA_COMPANY = 5;
+const STAMINA_BLACKMARKET = 5;
+const STAMINA_DRAW = 5;
+const STAMINA_INVEST = 5;
+const STAMINA_MORTGAGE = 5;
+const STAMINA_SELLHOUSE = 5;
 
 const delay = (ms) => new Promise(r => setTimeout(r, ms));
 const ownable = (t) => !!t && ['property', 'railroad', 'utility'].includes(t.type);
-const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // 去掉易混淆字符
+const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
 // ---------- 序列化 ----------
-function serializeState(g) {
+function serializeState(g, round = 0) {
   return {
     players: g.players,
     owner: g.owner,
     houses: g.houses,
-    mortgaged: [...g.mortgaged],   // Set → 数组
+    mortgaged: [...g.mortgaged],
     industry: g.industry,
     marketHeat: g.marketHeat,
     newsMult: g.newsMult,
@@ -31,6 +48,7 @@ function serializeState(g) {
     chanceDeck: g.chanceDeck,
     chestDeck: g.chestDeck,
     turn: g.turn,
+    round,
   };
 }
 
@@ -38,17 +56,20 @@ function serializeState(g) {
 class Room {
   constructor(code) {
     this.code = code;
-    this.slots = [];               // [{seat,name,isAI}] 大厅座位表
-    this.conns = new Map();        // seat → ws
+    this.slots = [];
+    this.conns = new Map();
     this.hostSeat = 0;
     this.started = false;
     this.game = null;
     this.engine = null;
     this.brain = null;
-    this.pending = new Map();      // reqId → {cat, seat, resolve, timer, def}
-    this.aiManaged = new Set();    // 断线托管座位
-    this.currentSeat = -1;
+    this.pending = new Map();
+    this.aiManaged = new Set();
     this.reqSeq = 1;
+    this.round = 0;
+    this.roundEnded = new Set();
+    this._opQueue = new Map();
+    this._roundResolver = null;
   }
 
   // ---------- 发送 ----------
@@ -59,8 +80,28 @@ class Room {
     for (const [seat, ws] of this.conns) if (seat !== exceptSeat && ws.readyState === 1) ws.send(s);
   }
   log(html, cls = '') { this.broadcast({ t: 'log', html, cls }); }
-  update() { this.broadcast({ t: 'state', state: serializeState(this.game) }); }
+  update() { this.broadcast({ t: 'state', state: serializeState(this.game, this.round) }); }
   say(seat, text) { if (text) this.broadcast({ t: 'say', seat, text }); }
+
+  _enqueueOp(seat, fn) {
+    const prev = this._opQueue.get(seat) || Promise.resolve();
+    const next = prev.then(fn).catch(err => console.error(`[op queue seat ${seat}]`, err));
+    this._opQueue.set(seat, next);
+    return next;
+  }
+
+  _checkRoundEnd() {
+    if (!this._roundResolver) return;
+    const g = this.game;
+    const alive = g.alivePlayers();
+    const allEnded = alive.every(p => this.roundEnded.has(p.id));
+    const allExhausted = alive.every(p => (p.stamina || 0) <= 0 || this.roundEnded.has(p.id));
+    if (allEnded || allExhausted) {
+      const resolve = this._roundResolver;
+      this._roundResolver = null;
+      resolve();
+    }
+  }
 
   broadcastLobby() {
     this.broadcast({
@@ -107,7 +148,6 @@ class Room {
   // ---------- 开局 ----------
   async start() {
     this.started = true;
-    // 重排座位：大厅可能有人离开留下空位，开局时压缩为 0..n-1，保证 seat === 玩家 id
     const sorted = [...this.slots].sort((a, b) => a.seat - b.seat);
     const newConns = new Map();
     sorted.forEach((s, i) => {
@@ -118,7 +158,6 @@ class Room {
     this.slots = sorted;
     this.conns = newConns;
 
-    // 按座位顺序构造玩家；AI 随机分配人格
     const personas = [...PERSONAS].sort(() => Math.random() - 0.5);
     let pi = 0;
     const configs = this.slots.map(s => ({
@@ -126,141 +165,455 @@ class Room {
       persona: s.isAI ? personas[pi++ % personas.length].id : undefined,
     }));
     this.game = new GameState(configs);
-    // 纯本地启发式（不接 LLM）
     this.brain = new AIBrain({ enabled: false, chat: async () => null }, this.game);
 
     const adapter = makeNetAdapter(this);
     this.engine = new Engine(this.game, adapter);
-    // 休眠卡：包装 playTurn 实现跳过回合（不改 engine.js）
-    const origPlay = this.engine.playTurn.bind(this.engine);
-    this.engine.playTurn = async (p) => {
-      if ((p.skipTurns || 0) > 0) {
-        p.skipTurns--;
-        this.log(`💤 ${p.name} 进入休眠，跳过本回合`, 'bad');
-        this.update();
-        await delay(600 / SPEED);
-        return;
-      }
-      return origPlay(p);
-    };
 
-    // 开局：逐客户端下发（yourSeat 各自不同）
     const roster = this.slots.map(s => ({ seat: s.seat, name: s.name, isAI: s.isAI }));
     for (const [seat, ws] of this.conns) {
-      this.send(ws, { t: 'begin', state: serializeState(this.game), yourSeat: seat, roster });
+      this.send(ws, { t: 'begin', state: serializeState(this.game, this.round), yourSeat: seat, roster });
     }
-    this.log(`🎮 游戏开始！${roster.length} 位玩家入场`, 'turn');
+    this.log(`🎮 游戏开始！${roster.length} 位玩家入场 · 同步回合制`, 'turn');
 
     try {
-      await this.engine.run();
+      await this.runRoundLoop();
     } catch (err) {
       console.error(`[room ${this.code}] engine error:`, err);
       this.log('服务器内部错误，本局终止', 'bad');
     }
-    // 结束后给客户端留出展示时间再回收房间
     setTimeout(() => destroyRoom(this.code), 30_000);
+  }
+
+  // ---------- 同步回合循环 ----------
+  async runRoundLoop() {
+    const g = this.game;
+    const engine = this.engine;
+    const brain = this.brain;
+    const adapter = makeNetAdapter(this);
+
+    while (!g.winner()) {
+      this.roundEnded = new Set();
+      const alive = g.alivePlayers();
+
+      this.broadcast({
+        t: 'roundStart',
+        round: this.round,
+        players: alive.map(p => ({
+          id: p.id, name: p.name, stamina: p.stamina,
+          money: p.money, bankrupt: p.bankrupt,
+        })),
+        state: serializeState(g, this.round),
+      });
+      this.log(`—— 第 ${this.round + 1} 回合开始，${alive.length} 位玩家同步行动 ——`, 'turn');
+
+      const tasks = [];
+      for (const p of alive) {
+        if (this.roundEnded.has(p.id)) continue;
+        tasks.push(this._runPlayerRound(p, engine, brain, adapter));
+      }
+
+      await new Promise(resolve => {
+        this._roundResolver = resolve;
+        this._checkRoundEnd();
+      });
+
+      if (!g.winner()) {
+        await this.advanceRound(g);
+      }
+    }
+
+    let w = g.winner();
+    if (!w) w = g.alivePlayers().sort((x, y) => g.netWorth(y) - g.netWorth(x))[0];
+    this.broadcast({ t: 'over', winnerId: w.id });
+  }
+
+  async _runPlayerRound(p, engine, brain, adapter) {
+    if (p.bankrupt) {
+      this.roundEnded.add(p.id);
+      this._checkRoundEnd();
+      return;
+    }
+    try {
+      if ((p.skipTurns || 0) > 0) {
+        p.skipTurns--;
+        this.log(`💤 ${p.name} 进入休眠，跳过本回合`, 'bad');
+        this.update();
+        this.roundEnded.add(p.id);
+        this._checkRoundEnd();
+        return;
+      }
+
+      if (p.isAI || this.aiManaged.has(p.id)) {
+        await this._runAIPlayerRound(p, engine, brain, adapter);
+        this.roundEnded.add(p.id);
+        this._checkRoundEnd();
+      }
+    } catch (err) {
+      console.error(`[player round ${p.id}]`, err);
+      this.roundEnded.add(p.id);
+      this._checkRoundEnd();
+    }
+  }
+
+  async _runAIPlayerRound(p, engine, brain, adapter) {
+    await delay(300 / SPEED);
+    if ((p.stamina || 0) >= STAMINA_DICE) {
+      await this._executePlayerRoll(p, engine, brain);
+    }
+    await delay(200 / SPEED);
+    if (!p.bankrupt) {
+      aiEndTurnOps(this, p);
+      await this._autoFreeDraw(p);
+    }
+  }
+
+  async _executePlayerRoll(p, engine, brain) {
+    const g = this.game;
+    if ((p.stamina || 0) < STAMINA_DICE) return;
+
+    if (p.inJail) {
+      const escaped = await this._handleJailEscape(p);
+      if (!escaped) return;
+    }
+
+    p.stamina = Math.max(0, (p.stamina || 0) - STAMINA_DICE);
+
+    const d1 = g.rollDie();
+    const d2 = g.rollDie();
+    const doubles = d1 === d2;
+    let total = d1 + d2;
+
+    this.broadcast({ t: 'dice', d1, d2, playerId: p.id });
+    this.log(`${p.name} 掷出 <b>${d1}</b> + <b>${d2}</b>${doubles ? ' <span class="gold">双数！</span>' : ''}`);
+    await delay(2600 / SPEED);
+
+    if (doubles && this._doublesCount && this._doublesCount.get(p.id) >= 2) {
+      this.log(`${p.name} 连续三次双数，操纵市场被约谈！`, 'bad');
+      const from = p.position;
+      g.sendToJail(p);
+      this.broadcast({ t: 'tele', player: p.id, from, to: JAIL_INDEX, playerName: p.name });
+      await delay(4200 / SPEED);
+      this._doublesCount.delete(p.id);
+      return;
+    }
+    if (doubles) {
+      this._doublesCount = this._doublesCount || new Map();
+      this._doublesCount.set(p.id, (this._doublesCount.get(p.id) || 0) + 1);
+    } else {
+      this._doublesCount?.delete(p.id);
+    }
+
+    const { from, passedGo } = g.moveSteps(p, total);
+    this.broadcast({ t: 'move', player: p.id, from, steps: total });
+    await delay(Math.min(1000, 200 + Math.abs(total) * 90) / SPEED);
+
+    if (passedGo) {
+      this.log(`${p.name} 经过起点，融资到账 <span class="gold">${formatMoney(GO_SALARY)}</span>`, 'good');
+      const loot = g.drawItemPack(p, 1);
+      if (loot.length) this.log(`🎁 起点补给：${g.formatDrawLoot(loot)}`, 'card');
+    }
+
+    await this._resolveLanding(p, total, brain);
+    this.update();
+
+    if (!p.bankrupt && doubles && !p.inJail && (p.stamina || 0) >= STAMINA_DICE) {
+      this.log(`${p.name} 获得额外一次掷骰机会`, 'good');
+      await delay(400 / SPEED);
+      await this._executePlayerRoll(p, engine, brain);
+    }
+  }
+
+  async _handleJailEscape(p) {
+    const g = this.game;
+    if (p.jailCards > 0) {
+      p.jailCards--;
+      p.inJail = false;
+      p.jailTurns = 0;
+      this.log(`${p.name} 出示免于约谈卡，从容离场！`, 'good');
+      return true;
+    }
+    if (p.money >= JAIL_FINE) {
+      p.money -= JAIL_FINE;
+      p.inJail = false;
+      p.jailTurns = 0;
+      this.log(`${p.name} 缴纳保证金离开监管局`, 'good');
+      return true;
+    }
+    const d1 = g.rollDie();
+    const d2 = g.rollDie();
+    this.broadcast({ t: 'dice', d1, d2, playerId: p.id });
+    await delay(2600 / SPEED);
+    this.log(`${p.name} 在监管局掷出 ${d1} + ${d2}`);
+    if (d1 === d2) {
+      p.inJail = false;
+      p.jailTurns = 0;
+      this.log(`${p.name} 掷出双数，恢复自由！`, 'good');
+      const { from } = g.moveSteps(p, d1 + d2);
+      this.broadcast({ t: 'move', player: p.id, from, steps: d1 + d2 });
+      await delay(800 / SPEED);
+      return true;
+    }
+    p.jailTurns++;
+    if (p.jailTurns >= 3) {
+      p.inJail = false;
+      p.jailTurns = 0;
+      this.log(`${p.name} 三次未脱身，强制缴纳保证金`, 'bad');
+      g.forcePay(p, JAIL_FINE, null);
+      return true;
+    }
+    this.log(`${p.name} 未能掷出双数（第 ${p.jailTurns}/3 次）`, 'bad');
+    return false;
+  }
+
+  async _resolveLanding(p, diceSum, brain) {
+    if (p.bankrupt) return;
+    const g = this.game;
+    const i = p.position;
+    const t = TILES[i];
+    this.log(`${p.name} 抵达 <b>${t.name}</b>`);
+    switch (t.type) {
+      case 'go': break;
+      case 'parking': {
+        this.log('在度假区充电灵感，打开补给包！');
+        const loot = g.drawItemPack(p, PARKING_DRAW_N);
+        if (loot.length) this.log(`🎁 度假补给：${g.formatDrawLoot(loot)}`, 'card');
+        await delay(400 / SPEED);
+        break;
+      }
+      case 'jail':
+        this.log('只是路过监管局门口。');
+        await delay(400 / SPEED);
+        break;
+      case 'lottery': {
+        this.log(`${p.name} 在彩票站点刮了一张彩票（${formatMoney(LOTTERY_COST)}）`);
+        const r = g.forcePay(p, LOTTERY_COST, null);
+        if (r.bankrupt) { this.log(`${p.name} 连彩票钱都付不起，破产！`, 'bad'); break; }
+        if (g.rng() < LOTTERY_WIN_CHANCE) {
+          p.money += LOTTERY_JACKPOT;
+          this.log(`🎉 ${p.name} 中大奖！+${formatMoney(LOTTERY_JACKPOT)}`, 'good');
+        } else {
+          this.log('😞 谢谢参与。');
+        }
+        break;
+      }
+      case 'hospital': {
+        const worth = g.netWorth(p);
+        const fee = Math.max(HOSPITAL_FEE, HOSPITAL_FEE + Math.floor(worth * 0.03));
+        this.log(`${p.name} 在综合医院就诊（${formatMoney(fee)}，含资产税）`);
+        const r = g.forcePay(p, fee, null);
+        if (r.bankrupt) this.log(`${p.name} 付不起医疗费，破产！`, 'bad');
+        break;
+      }
+      case 'tax': {
+        this.log(`${p.name} 缴纳${t.name} <span class="bad">${formatMoney(t.amount)}</span>`);
+        const r = g.forcePay(p, t.amount, null);
+        if (r.bankrupt) this.log(`${p.name} 缴税破产出局！`, 'bad');
+        break;
+      }
+      case 'gotojail': {
+        this.log(`${p.name} 违规经营被当场约谈！`, 'bad');
+        g.sendToJail(p);
+        this.broadcast({ t: 'tele', player: p.id, from: i, to: JAIL_INDEX, playerName: p.name });
+        await delay(4200 / SPEED);
+        break;
+      }
+      case 'chance':
+      case 'chest': {
+        const { card, deck } = g.drawCard(t.type);
+        this.broadcast({ t: 'card', player: p.id, card, deck });
+        await delay(4200 / SPEED);
+        await this._applyCard(p, card, diceSum);
+        break;
+      }
+      case 'property':
+      case 'railroad':
+      case 'utility':
+        await this._resolveProperty(p, i, diceSum, brain);
+        break;
+    }
+  }
+
+  async _resolveProperty(p, i, diceSum, brain) {
+    const g = this.game;
+    const t = TILES[i];
+    const ownerId = g.owner[i];
+    if (ownerId === p.id) {
+      this.log('自家产业，巡视一番。');
+      await delay(300 / SPEED);
+      return;
+    }
+    if (ownerId < 0) {
+      if (p.money < t.price) {
+        this.log(`${p.name} 资金不足，拿不下 ${t.name}（${formatMoney(t.price)}）`, 'bad');
+        return;
+      }
+      let buy = false;
+      if (p.isAI || this.aiManaged.has(p.id)) {
+        const r = await brain.decideBuy(p, i);
+        if (r.say) this.say(p.id, r.say);
+        buy = r.buy;
+      } else {
+        buy = await this.ask('buy', p.id, { tileIdx: i }, false);
+      }
+      if (buy && (p.stamina || 0) >= STAMINA_BUY_LAND) {
+        g.buyProperty(p, i);
+        p.stamina = Math.max(0, (p.stamina || 0) - STAMINA_BUY_LAND);
+        this.log(`${p.name} 以 <span class="gold">${formatMoney(t.price)}</span> 收购 <b>${t.name}</b>！`, 'good');
+        if (g.rng() < BUY_LAND_DRAW_CHANCE) {
+          const loot = g.drawItemPack(p, 1);
+          if (loot.length) this.log(`🎁 开业礼包：${g.formatDrawLoot(loot)}`, 'card');
+        }
+      } else if (!p.isAI && !this.aiManaged.has(p.id)) {
+        this.log(`${p.name} 踏入无主之地 ${t.name}（需体力 ≥${STAMINA_BUY_LAND} 方可收购）`, 'muted');
+      }
+      return;
+    }
+    const owner = g.players[ownerId];
+    if (g.isMortgaged(i)) {
+      this.log(`${t.name} 已抵押给银行，暂停收租。`);
+      await delay(300 / SPEED);
+      return;
+    }
+    let rent = g.calcRent(i, diceSum);
+    this.log(`${t.name} 属于 ${owner.name}，应付租金 <span class="bad">${formatMoney(rent)}</span>`);
+    if (rent > 0 && p.hedgeRent) {
+      rent = Math.ceil(rent / 2);
+      p.hedgeRent = false;
+      this.log(`${p.name} 触发 ☂️对冲保单，租金减半至 ${formatMoney(rent)}`, 'good');
+    }
+    const r = g.forcePay(p, rent, owner);
+    if (r.bankrupt) {
+      this.log(`${p.name} 全部身家 ${formatMoney(r.paid)} 赔给 ${owner.name}，破产出局！`, 'bad');
+    } else {
+      this.log(`${p.name} 支付 ${formatMoney(r.paid)} 给 ${owner.name}`);
+    }
+    if (r.soldHouses > 0) this.log(`${p.name} 被迫变卖 ${r.soldHouses} 栋建筑筹资`, 'bad');
+    if (r.mortgaged > 0) this.log(`${p.name} 抵押了 ${r.mortgaged} 处地产`, 'bad');
+    if (r.borrowed > 0) this.log(`${p.name} 向银行紧急贷款 ${formatMoney(r.borrowed)}`, 'bad');
+  }
+
+  async _applyCard(p, card, diceSum) {
+    const g = this.game;
+    const a = card.action;
+    this.log(`卡牌：${card.text}`, 'card');
+    switch (a.kind) {
+      case 'money':
+        if (a.amount >= 0) p.money += a.amount;
+        else {
+          const r = g.forcePay(p, -a.amount, null);
+          if (r.bankrupt) this.log(`${p.name} 付款破产出局！`, 'bad');
+        }
+        break;
+      case 'moneyEach':
+        for (const other of g.players) {
+          if (other.id === p.id || other.bankrupt) continue;
+          if (a.amount >= 0) {
+            const r = g.forcePay(other, a.amount, p);
+            if (r.bankrupt) this.log(`${other.name} 被此卡逼到破产！`, 'bad');
+          } else {
+            const r = g.forcePay(p, -a.amount, other);
+            if (r.bankrupt) { this.log(`${p.name} 赔付破产出局！`, 'bad'); break; }
+          }
+        }
+        break;
+      case 'jailCard':
+        p.jailCards++;
+        break;
+      case 'item':
+        g.giveItem(p, a.item, a.n || 1);
+        break;
+      case 'jail': {
+        const from = p.position;
+        g.sendToJail(p);
+        this.broadcast({ t: 'tele', player: p.id, from, to: JAIL_INDEX, playerName: p.name });
+        await delay(4200 / SPEED);
+        break;
+      }
+      case 'moveTo': {
+        const from = p.position;
+        const steps = (a.to - from + TILES.length) % TILES.length;
+        if (steps > 0) {
+          const r = g.moveSteps(p, steps);
+          this.broadcast({ t: 'move', player: p.id, from, steps });
+          await delay(Math.min(1000, 200 + Math.abs(steps) * 90) / SPEED);
+          if (a.collectGo && r.passedGo) this.log(`经过起点，融资到账 ${formatMoney(GO_SALARY)}`, 'good');
+          this.update();
+          await this._resolveLanding(p, diceSum, null);
+        }
+        break;
+      }
+      case 'moveSteps': {
+        const from = p.position;
+        g.moveSteps(p, a.steps);
+        this.broadcast({ t: 'move', player: p.id, from, steps: a.steps });
+        await delay(Math.min(1000, 200 + Math.abs(a.steps) * 90) / SPEED);
+        this.update();
+        await this._resolveLanding(p, diceSum, null);
+        break;
+      }
+    }
+  }
+
+  async _autoFreeDraw(p) {
+    const g = this.game;
+    while (g.canFreeDraw(p)) {
+      const r = g.takeDraw(p, 'free');
+      if (!r?.got?.length) break;
+      this.log(`🃏 回合补给：${g.formatDrawLoot(r.got)}`, 'card');
+    }
+  }
+
+  async advanceRound(g) {
+    for (const p of g.alivePlayers()) {
+      g.applyTurnStart(p);
+      if ((p.noBuildTurns || 0) > 0) p.noBuildTurns--;
+    }
+    g.tickMarket();
+    if (g.rng() < 0.42) {
+      const shift = g.randomIndustryShift();
+      if (shift) {
+        const ind = INDUSTRIES[shift.key];
+        const st = shift.to > shift.from ? '📈' : '📉';
+        this.log(`📰 <b>行业快讯</b>：${ind.icon}${ind.name} 景气变动 ${st}`, 'card');
+      }
+    }
+    this.round++;
+    for (const p of g.alivePlayers()) {
+      const audit = g.regulatorAudit(p);
+      if (audit && audit.fine > 0) {
+        this.log(`🕵️ 监管：${audit.reason}，罚款 ${formatMoney(audit.fine)}`, 'bad');
+        g.forcePay(p, audit.fine, null);
+      } else if (audit && audit.fine === 0) {
+        this.log(`🕵️ 监管：${audit.reason}`, 'good');
+      }
+    }
+    this.broadcast({
+      t: 'newRound',
+      round: this.round,
+      state: serializeState(g, this.round),
+    });
+    this.update();
   }
 }
 
-// ---------- 网络适配器（Engine adapter 的服务端实现） ----------
+// ---------- 网络适配器（最小化，仅用于 Engine 构造兼容） ----------
 function makeNetAdapter(room) {
-  const g = () => room.game;
   return {
     log: (html, cls) => room.log(html, cls),
     update: () => room.update(),
     pause: (ms) => delay(ms / SPEED),
-
-    onEvent(p, kind) {
-      if (!p.isAI) return;
-      room.brain.banter(p, kind).then(text => room.say(p.id, text));
-    },
-
-    /** 全员视野：道具出牌特效 */
-    onItemCast(p, item) {
-      if (!p || !item) return;
-      room.broadcast({ t: 'itemCast', playerId: p.id, item, name: p.name });
-    },
-
-    phase(name, p) {
-      if (name === 'turnStart' && p) room.currentSeat = p.id;
-      room.broadcast({ t: 'phase', name, playerId: p?.id });
-    },
-
-    async animateDice(d1, d2) {
-      room.broadcast({ t: 'dice', d1, d2 });
-      await delay(2600 / SPEED); // 掷骰 + 特写停留约 1s + 拉回
-    },
-
-    async promptBankPledge(p, opts) {
-      if (room.isHumanOnline(p.id)) {
-        return room.ask('bankPledge', p.id, opts, false);
-      }
-      return p.money < ttc(250);
-    },
-    async animateMove(p, from, steps) {
-      room.broadcast({ t: 'move', player: p.id, from, steps });
-      await delay(Math.min(1000, 200 + Math.abs(steps) * 90) / SPEED);
-    },
-    async animateTeleport(p, from, to) {
-      room.broadcast({ t: 'tele', player: p.id, from, to, playerName: p.name });
-      // 进监管局：红头文件展示 3s + 铁笼收场
-      const toJail = to === 10;
-      await delay((toJail ? 4200 : 650) / SPEED);
-    },
-    async showCard(p, card, deck) {
-      room.broadcast({ t: 'card', player: p.id, card, deck });
-      // 与客户端 showCard auto 停留对齐（约 4.2s）
-      await delay(4200 / SPEED);
-    },
-
-    async showHoloNotice(opts) {
-      room.broadcast({ t: 'holo', ...opts, auto: true });
-      await delay((opts.duration || 3800) / SPEED);
-    },
-
-    // ---------- 问答：人类在线→网络问答；AI/托管→启发式 ----------
-    waitRoll(p) {
-      if (room.isHumanOnline(p.id)) return room.ask('roll', p.id, {}, { type: 'roll' });
-      return (async () => { await delay(500 / SPEED); return { type: 'roll' }; })();
-    },
-
-    async waitEndTurn(p) {
-      if (room.isHumanOnline(p.id)) return room.ask('endTurn', p.id, {}, undefined);
-      await delay(300 / SPEED);
-      aiEndTurnOps(room, p);
-      await delay(400 / SPEED);
-    },
-
-    promptBuy(p, tileIdx) {
-      if (room.isHumanOnline(p.id)) return room.ask('buy', p.id, { tileIdx }, false);
-      return (async () => {
-        const r = await room.brain.decideBuy(p, tileIdx);
-        if (r.say) room.say(p.id, r.say);
-        return r.buy;
-      })();
-    },
-
-    promptJail(p, opts) {
-      if (room.isHumanOnline(p.id)) return room.ask('jail', p.id, opts, 'roll');
-      return (async () => {
-        await delay(400 / SPEED);
-        if (opts.hasCard) return 'card';
-        if (opts.canPay && p.money >= ttc(300)) return 'pay';
-        return 'roll';
-      })();
-    },
-
-    promptItemUse(p, item, ctx) {
-      if (room.isHumanOnline(p.id)) return room.ask('itemUse', p.id, { item, ctx }, false);
-      return Promise.resolve(ctx.rent >= ttc(80));
-    },
-
-    async gameOver(winner) {
-      room.update();
-      room.log(`🏆 ${winner.name} 加冕商业帝国！`, 'turn');
-      if (winner.isAI) room.say(winner.id, await room.brain.banter(winner, 'win'));
-      room.broadcast({ t: 'over', winnerId: winner.id });
-    },
+    phase() {},
+    animateDice() {},
+    animateMove() {},
+    animateTeleport() {},
+    showCard() {},
+    waitRoll() { return { type: 'roll' }; },
+    waitEndTurn() {},
+    promptBuy() { return false; },
+    promptJail() { return 'roll'; },
+    promptItemUse() { return false; },
+    gameOver(w) { room.broadcast({ t: 'over', winnerId: w.id }); },
   };
 }
 
@@ -372,201 +725,237 @@ function handleOp(room, seat, msg) {
   const p = g.players[seat];
   const err = (m) => room.sendSeat(seat, { t: 'error', msg: m });
   if (!g || p.bankrupt) return;
-  if (seat !== room.currentSeat) return err('还没轮到你行动');
 
+  room._enqueueOp(seat, async () => {
+    if (p.bankrupt) return;
+
+    const done = executeOp(room, seat, msg, err);
+    if (done) {
+      room.log(done, msg.op === 'playCard' ? 'card' : 'good');
+      if (msg.op === 'playCard' && msg.item) {
+        room.broadcast({ t: 'itemCast', playerId: p.id, item: msg.item, name: p.name });
+      }
+      if (msg.op === 'intel') {
+        room.broadcast({ t: 'itemCast', playerId: p.id, item: 'intel', name: p.name });
+      }
+      room.update();
+      if ((p.stamina || 0) <= 0 && !room.roundEnded.has(seat)) {
+        room.log(`${p.name} 体力耗尽，自动结束回合`, 'muted');
+        room.roundEnded.add(seat);
+        room._checkRoundEnd();
+      }
+    }
+  });
+}
+
+function executeOp(room, seat, msg, err) {
+  const g = room.game;
+  const p = g.players[seat];
   const tileOk = (i) => Number.isInteger(i) && i >= 0 && i < TILES.length;
-  let done = '';
+
   switch (msg.op) {
     case 'build': {
       const i = msg.tileIdx;
+      if ((p.stamina || 0) < STAMINA_BUILD) return err('体力不足，需要 ' + STAMINA_BUILD);
       if (!tileOk(i) || !g.canBuild(p, i)) {
         return err((p.items?.permit || 0) < 1 ? '需要建设卡才能建楼' : '此处不能建设');
       }
       g.buyHouse(p, i);
-      done = `${p.name} 消耗建设卡，在 ${TILES[i].name} 起了一级楼`;
-      break;
+      return `${p.name} 消耗建设卡，在 ${TILES[i].name} 起了一级楼`;
     }
     case 'sellHouse': {
       const i = msg.tileIdx;
+      if ((p.stamina || 0) < STAMINA_SELLHOUSE) return err('体力不足');
       if (!tileOk(i) || !g.canSellHouse(p, i)) return err('此处没有可卖建筑');
+      p.stamina = Math.max(0, (p.stamina || 0) - STAMINA_SELLHOUSE);
       g.sellHouse(p, i);
-      done = `${p.name} 卖出了 ${TILES[i].name} 的一级建筑`;
-      break;
+      return `${p.name} 卖出了 ${TILES[i].name} 的一级建筑`;
     }
     case 'borrow': {
       const amt = Math.max(1, Math.round(Number(msg.amount) || 0));
+      if ((p.stamina || 0) < STAMINA_BANK) return err('体力不足，需要 ' + STAMINA_BANK);
       if (!g.canBorrow(p, amt)) return err('超出信用额度');
+      p.stamina = Math.max(0, (p.stamina || 0) - STAMINA_BANK);
       g.borrow(p, amt);
-      done = `${p.name} 向银行贷款 ${formatMoney(amt)}`;
-      break;
+      return `${p.name} 向银行贷款 ${formatMoney(amt)}`;
     }
     case 'repay': {
       const amt = Math.max(1, Math.round(Number(msg.amount) || 0));
+      if ((p.stamina || 0) < STAMINA_BANK) return err('体力不足，需要 ' + STAMINA_BANK);
       const r = g.repay(p, amt);
       if (r <= 0) return err('没有可还金额');
-      done = `${p.name} 偿还贷款 ${formatMoney(r)}`;
-      break;
+      p.stamina = Math.max(0, (p.stamina || 0) - STAMINA_BANK);
+      return `${p.name} 偿还贷款 ${formatMoney(r)}`;
     }
     case 'mortgage': {
       const i = msg.tileIdx;
+      if ((p.stamina || 0) < STAMINA_MORTGAGE) return err('体力不足');
       if (!tileOk(i) || !g.canMortgage(p, i)) return err('该地产不能抵押');
+      p.stamina = Math.max(0, (p.stamina || 0) - STAMINA_MORTGAGE);
       g.mortgage(p, i);
-      done = `${p.name} 抵押了 ${TILES[i].name}（+${formatMoney(g.mortgageValue(i))}）`;
-      break;
+      return `${p.name} 抵押了 ${TILES[i].name}（+${formatMoney(g.mortgageValue(i))}）`;
     }
     case 'unmortgage': {
       const i = msg.tileIdx;
+      if ((p.stamina || 0) < STAMINA_MORTGAGE) return err('体力不足');
       if (!tileOk(i) || !g.canUnmortgage(p, i)) return err('该地产不能赎回');
+      p.stamina = Math.max(0, (p.stamina || 0) - STAMINA_MORTGAGE);
       g.unmortgage(p, i);
-      done = `${p.name} 赎回了 ${TILES[i].name}`;
-      break;
+      return `${p.name} 赎回了 ${TILES[i].name}`;
     }
     case 'foundCompany': {
       const ind = msg.industry;
+      if ((p.stamina || 0) < STAMINA_COMPANY) return err('体力不足，需要 ' + STAMINA_COMPANY);
       if (!INDUSTRIES[ind] || ind === 'railroad' || ind === 'utility') return err('无效行业');
       if (!g.canFoundCompany(p)) {
         return err((p.items?.charter || 0) < 1 ? '需要公司卡才能创办' : '现在不能创办公司');
       }
+      p.stamina = Math.max(0, (p.stamina || 0) - STAMINA_COMPANY);
       g.foundCompany(p, ind);
-      done = `${p.name} 消耗公司卡，创办了 ${INDUSTRIES[ind].icon}${INDUSTRIES[ind].name} 公司！`;
-      break;
+      return `${p.name} 消耗公司卡，创办了 ${INDUSTRIES[ind].icon}${INDUSTRIES[ind].name} 公司！`;
     }
     case 'upgradeCompany': {
+      if ((p.stamina || 0) < STAMINA_COMPANY) return err('体力不足，需要 ' + STAMINA_COMPANY);
       if (!g.canUpgradeCompany(p)) {
         return err((p.items?.charter || 0) < 1 ? '需要公司卡才能升级' : '公司不能升级');
       }
+      p.stamina = Math.max(0, (p.stamina || 0) - STAMINA_COMPANY);
       g.upgradeCompany(p);
-      done = `${p.name} 消耗公司卡，公司升到 Lv${p.company.level}`;
-      break;
+      return `${p.name} 消耗公司卡，公司升到 Lv${p.company.level}`;
     }
     case 'buyStock': {
       const ind = msg.industry;
       const n = Math.max(1, Math.min(20, Math.round(Number(msg.n) || 1)));
+      if ((p.stamina || 0) < STAMINA_STOCK) return err('体力不足，需要 ' + STAMINA_STOCK);
       if (!g.canBuyStock(p, ind, n)) {
         return err('无法买入股票（需持有该行业地产、现金足够、未超个人/全场持股上限）');
       }
+      p.stamina = Math.max(0, (p.stamina || 0) - STAMINA_STOCK);
       const r = g.buyStock(p, ind, n);
-      done = `${p.name} 买入 ${INDUSTRIES[ind].icon}${INDUSTRIES[ind].name} 股票 ${n} 手（${formatMoney(r.cost)}），过路费 ×${r.boost.toFixed(2)}`;
-      break;
+      return `${p.name} 买入 ${INDUSTRIES[ind].icon}${INDUSTRIES[ind].name} 股票 ${n} 手（${formatMoney(r.cost)}），过路费 ×${r.boost.toFixed(2)}`;
     }
     case 'sellStock': {
       const ind = msg.industry;
       const n = Math.max(1, Math.min(20, Math.round(Number(msg.n) || 1)));
+      if ((p.stamina || 0) < STAMINA_STOCK) return err('体力不足，需要 ' + STAMINA_STOCK);
       if (!g.canSellStock(p, ind, n)) return err('无法卖出股票');
+      p.stamina = Math.max(0, (p.stamina || 0) - STAMINA_STOCK);
       const r = g.sellStock(p, ind, n);
-      done = `${p.name} 卖出 ${INDUSTRIES[ind].icon}${INDUSTRIES[ind].name} 股票 ${n} 手（+${formatMoney(r.gain)}），过路费 ×${r.boost.toFixed(2)}`;
-      break;
+      return `${p.name} 卖出 ${INDUSTRIES[ind].icon}${INDUSTRIES[ind].name} 股票 ${n} 手（+${formatMoney(r.gain)}），过路费 ×${r.boost.toFixed(2)}`;
     }
     case 'openShort': {
       const ind = msg.industry;
       const n = Math.max(1, Math.min(20, Math.round(Number(msg.n) || 1)));
+      if ((p.stamina || 0) < STAMINA_STOCK) return err('体力不足，需要 ' + STAMINA_STOCK);
       if (!g.openShort || !g.canOpenShort?.(p, ind, n)) {
         return err('无法做空（需持地、无多头、未超空仓上限）');
       }
+      p.stamina = Math.max(0, (p.stamina || 0) - STAMINA_STOCK);
       const r = g.openShort(p, ind, n);
       if (!r) return err('无法做空');
-      done = `${p.name} 做空 ${INDUSTRIES[ind].icon}${INDUSTRIES[ind].name} ${n} 手（+${formatMoney(r.gain)}，待平）`;
-      break;
+      return `${p.name} 做空 ${INDUSTRIES[ind].icon}${INDUSTRIES[ind].name} ${n} 手（+${formatMoney(r.gain)}，待平）`;
     }
     case 'coverShort': {
       const ind = msg.industry;
       const n = Math.max(1, Math.min(20, Math.round(Number(msg.n) || 1)));
+      if ((p.stamina || 0) < STAMINA_STOCK) return err('体力不足，需要 ' + STAMINA_STOCK);
       if (!g.coverShort || !g.canCoverShort?.(p, ind, n)) return err('无法平空');
+      p.stamina = Math.max(0, (p.stamina || 0) - STAMINA_STOCK);
       const r = g.coverShort(p, ind, n);
       if (!r) return err('无法平空');
-      done = `${p.name} 平空 ${INDUSTRIES[ind].icon}${INDUSTRIES[ind].name} ${n} 手（-${formatMoney(r.cost)}）`;
-      break;
+      return `${p.name} 平空 ${INDUSTRIES[ind].icon}${INDUSTRIES[ind].name} ${n} 手（-${formatMoney(r.cost)}）`;
     }
     case 'ipo': {
+      if ((p.stamina || 0) < STAMINA_COMPANY) return err('体力不足，需要 ' + STAMINA_COMPANY);
       if (!g.canIPO(p)) return err('暂不可 IPO');
+      p.stamina = Math.max(0, (p.stamina || 0) - STAMINA_COMPANY);
       const r = g.doIPO(p);
-      done = `${p.name} 公司 IPO！抛出 ${r.n} 股，套现 ${formatMoney(r.raised)}`;
-      break;
+      return `${p.name} 公司 IPO！抛出 ${r.n} 股，套现 ${formatMoney(r.raised)}`;
     }
     case 'invest': {
       const founder = g.players[msg.founderId];
       const n = Math.max(1, Math.min(20, Math.round(Number(msg.n) || 1)));
       const fromFloat = !!msg.fromFloat;
+      if ((p.stamina || 0) < STAMINA_INVEST) return err('体力不足，需要 ' + STAMINA_INVEST);
       if (!founder || !g.canInvestCompany(p, founder, n, fromFloat)) return err('无法入股');
+      p.stamina = Math.max(0, (p.stamina || 0) - STAMINA_INVEST);
       const r = g.investCompany(p, founder, n, fromFloat);
-      done = `${p.name} 入股 ${founder.name} 公司 ${n} 股（${formatMoney(r.cost)}）`;
-      break;
+      return `${p.name} 入股 ${founder.name} 公司 ${n} 股（${formatMoney(r.cost)}）`;
     }
     case 'drawPack': {
       const mode = msg.mode === 'free' ? 'free' : 'paid';
+      if ((p.stamina || 0) < STAMINA_DRAW) return err('体力不足，需要 ' + STAMINA_DRAW);
       const r = g.takeDraw(p, mode);
       if (!r) return err(mode === 'paid' ? '无法付费抽牌（现金/次数）' : '没有免费抽牌次数');
-      done = mode === 'paid'
+      p.stamina = Math.max(0, (p.stamina || 0) - STAMINA_DRAW);
+      return mode === 'paid'
         ? `${p.name} 付费补给（${formatMoney(r.cost)}）：${g.formatDrawLoot(r.got)}`
         : `${p.name} 免费补给：${g.formatDrawLoot(r.got)}`;
-      break;
     }
     case 'pledge': {
       const n = Math.max(1, Math.min(20, Math.round(Number(msg.n) || 5)));
+      if ((p.stamina || 0) < STAMINA_COMPANY) return err('体力不足，需要 ' + STAMINA_COMPANY);
       if (!g.canPledgeShares(p, n)) return err('无法质押公司股');
+      p.stamina = Math.max(0, (p.stamina || 0) - STAMINA_COMPANY);
       const r = g.pledgeSharesForLoan(p, n);
-      done = `${p.name} 质押公司股 ${r.n} 手，获贷 ${formatMoney(r.loan)}`;
-      break;
+      return `${p.name} 质押公司股 ${r.n} 手，获贷 ${formatMoney(r.loan)}`;
     }
     case 'intel': {
       const ind = msg.industry;
       const mode = msg.mode === 'down' ? 'down' : 'up';
       if ((p.items.intel || 0) <= 0) return err('没有资讯卡');
+      if ((p.stamina || 0) < STAMINA_CARD) return err('体力不足，需要 ' + STAMINA_CARD);
       if (!g.useItem(p, 'intel')) return err('没有资讯卡');
+      p.stamina = Math.max(0, (p.stamina || 0) - STAMINA_CARD);
       const r = g.applyNews(ind, mode);
       if (!r) return err('无效行业');
-      done = `📰 ${p.name} 发布${mode === 'up' ? '利好' : '利空'}：${INDUSTRIES[ind].icon}${INDUSTRIES[ind].name} ${r.from.toFixed(2)}→${r.to.toFixed(2)}`;
-      break;
+      return `📰 ${p.name} 发布${mode === 'up' ? '利好' : '利空'}：${INDUSTRIES[ind].icon}${INDUSTRIES[ind].name} ${r.from.toFixed(2)}→${r.to.toFixed(2)}`;
     }
-    case 'demolish': // 兼容简写：直接给 tileIdx
-      return handleOp(room, seat, { op: 'playCard', item: 'demolish', tileIdx: msg.tileIdx });
+    case 'demolish':
+      return executeOp(room, seat, { op: 'playCard', item: 'demolish', tileIdx: msg.tileIdx }, err);
     case 'playCard': {
-      done = playCard(room, p, msg, err);
-      if (!done) return;
-      break;
+      if ((p.stamina || 0) < STAMINA_CARD) return err('体力不足，需要 ' + STAMINA_CARD);
+      const result = playCard(room, p, msg, err);
+      if (!result) return undefined;
+      p.stamina = Math.max(0, (p.stamina || 0) - STAMINA_CARD);
+      return result;
     }
     case 'listCard': {
       const item = msg.item;
       const price = Math.max(1, Math.round(Number(msg.price) || ttc(10)));
+      if ((p.stamina || 0) < STAMINA_BLACKMARKET) return err('体力不足，需要 ' + STAMINA_BLACKMARKET);
       if (!p.pendingListings?.length) return err('没有待定价卡牌');
       const idx = p.pendingListings.findIndex(it => it === item || !item);
       if (idx < 0) return err('该卡不在待定价列表');
       const [target] = p.pendingListings.splice(idx, 1);
       const id = g.listOnMarket(p, target, price);
-      done = `🏴 ${p.name} 将 ${ITEMS[target]?.icon || '🃏'}${target} 挂上黑市（${formatMoney(price)}）`;
+      p.stamina = Math.max(0, (p.stamina || 0) - STAMINA_BLACKMARKET);
       room.broadcast({ t: 'marketRefresh' });
-      break;
+      return `🏴 ${p.name} 将 ${ITEMS[target]?.icon || '🃏'}${target} 挂上黑市（${formatMoney(price)}）`;
     }
     case 'buyCard': {
       const listingId = Number(msg.listingId);
+      if ((p.stamina || 0) < STAMINA_BLACKMARKET) return err('体力不足，需要 ' + STAMINA_BLACKMARKET);
       if (!g.canBuyFromMarket(p, listingId)) return err('无法买入（资金不足/手牌已满/自己不能买自己的）');
       const r = g.buyFromMarket(p, listingId);
       if (!r) return err('买入失败');
-      done = `🏴 ${p.name} 从黑市买入 ${ITEMS[r.item]?.icon || '🃏'}${r.item}（${formatMoney(r.price)}）`;
+      p.stamina = Math.max(0, (p.stamina || 0) - STAMINA_BLACKMARKET);
       room.broadcast({ t: 'marketRefresh' });
-      break;
+      return `🏴 ${p.name} 从黑市买入 ${ITEMS[r.item]?.icon || '🃏'}${r.item}（${formatMoney(r.price)}）`;
     }
     case 'unlistCard': {
       const listingId = Number(msg.listingId);
+      if ((p.stamina || 0) < STAMINA_BLACKMARKET) return err('体力不足，需要 ' + STAMINA_BLACKMARKET);
       if (!g.canUnlist(p, listingId)) return err('无法下架（手牌已满/不是你的挂牌）');
       const r = g.unlistFromMarket(p, listingId);
       if (!r) return err('下架失败');
-      done = `🏴 ${p.name} 从黑市下架 ${ITEMS[r.item]?.icon || '🃏'}${r.item}`;
+      p.stamina = Math.max(0, (p.stamina || 0) - STAMINA_BLACKMARKET);
       room.broadcast({ t: 'marketRefresh' });
-      break;
+      return `🏴 ${p.name} 从黑市下架 ${ITEMS[r.item]?.icon || '🃏'}${r.item}`;
     }
     default:
       return err('未知操作');
   }
-  room.log(done, msg.op === 'playCard' ? 'card' : 'good');
-  // 全员视野：道具出牌特效
-  if (msg.op === 'playCard' && msg.item) {
-    room.broadcast({ t: 'itemCast', playerId: p.id, item: msg.item, name: p.name });
-  }
-  if (msg.op === 'intel') {
-    room.broadcast({ t: 'itemCast', playerId: p.id, item: 'intel', name: p.name });
-  }
-  room.update();
 }
 
 /** 主动道具卡：demolish/equalize/rob/swap/hibernate，返回日志文本（空=失败已 err） */
@@ -911,6 +1300,42 @@ function onMessage(ws, msg) {
       if (room?.started) handleOp(room, ws._seat, msg);
       break;
     }
+    case 'endRound': {
+      const room = ws._room;
+      if (!room?.started) return;
+      const seat = ws._seat;
+      if (room.roundEnded.has(seat)) break;
+      const p = room.game.players[seat];
+      room.roundEnded.add(seat);
+      room.broadcast({ t: 'playerEnded', seat, stamina: p?.stamina || 0 });
+      room.log(`${p?.name || '玩家'} 结束回合`, 'muted');
+      room._checkRoundEnd();
+      break;
+    }
+    case 'roll': {
+      const room = ws._room;
+      if (!room?.started) return;
+      const seat = ws._seat;
+      room._enqueueOp(seat, async () => {
+        const p = room.game.players[seat];
+        if (!p || p.bankrupt || room.roundEnded.has(seat)) return;
+        if ((p.stamina || 0) < STAMINA_DICE) {
+          room.sendSeat(seat, { t: 'error', msg: '体力不足，需要 ' + STAMINA_DICE });
+          return;
+        }
+        await room._executePlayerRoll(p, room.engine, room.brain);
+        await room._autoFreeDraw(p);
+        if (!p.bankrupt && room.game.bankShouldPitchPledge(p) && (p.isAI || room.aiManaged.has(seat))) {
+          const accept = await room.brain.decideBuy?.(p, -1)?.then?.(() => false) || false;
+          if (accept) {
+            const r = room.game.pledgeSharesForLoan(p, 5);
+            if (r) room.log(`${p.name} 质押公司股 5 手，获贷 ${formatMoney(r.loan)}`, 'card');
+          }
+        }
+        room.update();
+      });
+      break;
+    }
     case 'trade': {
       const room = ws._room;
       if (!room?.started) return;
@@ -919,7 +1344,6 @@ function onMessage(ws, msg) {
       const { buyerId, sellerId } = msg;
       const tileIdx = msg.tileIdx | 0;
       if (seat !== buyerId && seat !== sellerId) return err('只能发起自己参与的交易');
-      if (seat !== room.currentSeat) return err('只能在自己回合发起交易');
       const g = room.game;
       const buyer = g.players[buyerId], seller = g.players[sellerId];
       if (!buyer || !seller || buyerId === sellerId) return err('交易对象无效');

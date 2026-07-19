@@ -1,0 +1,26 @@
+[server] ws listening on :8081
+node:events:487
+      throw er; // Unhandled 'error' event
+      ^
+
+Error: listen EADDRINUSE: address already in use :::8081
+    at Server.setupListenHandle [as _listen2] (node:net:2008:16)
+    at listenInCluster (node:net:2065:12)
+    at Server.listen (node:net:2170:7)
+    at new WebSocketServer (D:\TongTianLu\澶у瘜缈乗node_modules\ws\lib\websocket-server.js:112:20)
+    at file:///D:/TongTianLu/%E5%A4%A7%E5%AF%8C%E7%BF%81/server/server.mjs:1196:13
+    at ModuleJob.run (node:internal/modules/esm/module_job:439:25)
+    at async node:internal/modules/esm/loader:666:26
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)
+Emitted 'error' event on WebSocketServer instance at:
+    at Server.emit (node:events:509:20)
+    at emitErrorNT (node:net:2044:8)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+  code: 'EADDRINUSE',
+  errno: -4091,
+  syscall: 'listen',
+  address: '::',
+  port: 8081
+}
+
+Node.js v26.2.0

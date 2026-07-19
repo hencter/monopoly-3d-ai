@@ -5,7 +5,7 @@ import {
   STOCK_INDUSTRIES, MAX_SHARES_PER_IND, COMPANY_IPO_MIN_LEVEL, SHARE_PLEDGE_LOAN,
   LIVING_RENT_FREE_SEC, LIVING_RENT_MAX, calcLivingRentAmount,
   formatMoney, ttc, CURRENCY_SYMBOL, CURRENCY_NAME, GO_SALARY, RAILROAD_RENTS,
-  ITEM_MARKET_BASE,
+  ITEM_MARKET_BASE, STAMINA_DICE, STAMINA_MAX,
 } from '../data/tiles.js';
 import { PLAYER_COLORS_CSS, MAX_PLAYERS } from '../three/world.js';
 
@@ -33,6 +33,7 @@ export class UI {
       countLabel: $('#player-count-label'),
       gameClock: $('#game-clock'), gameClockText: $('#game-clock-text'),
       gameClockSpeed: $('#game-clock-speed'),
+      rightPanel: $('#right-panel'),
     };
     this._rentTimer = null;
     this._rentT0 = 0;
@@ -187,7 +188,7 @@ export class UI {
   }
 
   enterGame() {
-    for (const k of ['players', 'actions', 'logWrap', 'chatWrap', 'chatDanmaku', 'industries', 'gameClock']) {
+    for (const k of ['players', 'actions', 'logWrap', 'chatWrap', 'chatDanmaku', 'industries', 'gameClock', 'rightPanel']) {
       this.el[k]?.classList.remove('hidden');
     }
   }
@@ -220,15 +221,43 @@ export class UI {
       return game.netWorth(b) - game.netWorth(a);
     });
 
+    const totalWorth = ranked.reduce((s, pl) => s + game.netWorth(pl), 0);
+
+    // 更新告警条
+    const alertStrip = document.getElementById('alert-strip');
+    if (alertStrip) {
+      const activeP = activeIdx >= 0 ? game.players[activeIdx] : null;
+      if (activeP && !activeP.bankrupt) {
+        const staminaLow = (activeP.stamina || 0) < STAMINA_DICE;
+        const moneyLow = activeP.money < ttc(100);
+        if (staminaLow || moneyLow) {
+          alertStrip.classList.remove('hidden');
+          const parts = [];
+          if (staminaLow) parts.push(`体力不足（${activeP.stamina || 0}/${STAMINA_MAX}）`);
+          if (moneyLow) parts.push(`资金告急（${formatMoney(activeP.money)}）`);
+          alertStrip.textContent = `⚠️ ${activeP.name}：${parts.join(' · ')}`;
+        } else {
+          alertStrip.classList.add('hidden');
+        }
+      } else {
+        alertStrip.classList.add('hidden');
+      }
+    }
+
     ranked.forEach((p, idx) => {
       const rank = idx + 1;
       const worth = game.netWorth(p);
       const delta = deltas[p.id] || 0;
+      const wealthPercent = totalWorth > 0 ? Math.min(100, Math.round((worth / totalWorth) * 100)) : 0;
+      const isCritical = !p.bankrupt && (p.money < ttc(100) || (p.stamina || 0) < STAMINA_DICE);
+      const isDanger = !p.bankrupt && p.debt > 0 && p.money < p.debt;
       const div = document.createElement('div');
       div.dataset.pid = String(p.id);
       div.className = 'player-card rank-row'
         + (p.id === activeIdx ? ' active' : '')
         + (p.bankrupt ? ' bankrupt' : '')
+        + (isCritical ? ' critical' : '')
+        + (isDanger ? ' danger' : '')
         + (expanded.has(String(p.id)) ? ' expanded' : '')
         + (rank <= 3 && !p.bankrupt ? ` top-${rank}` : '');
       const props = game.playerProperties(p.id).length;
@@ -257,7 +286,7 @@ export class UI {
             ${shortTotal > 0 ? `<span class="short-badge">📉空${shortTotal}</span>` : ''}
             <button class="ledger-btn" data-ledger="${p.id}" title="账本">📋</button>
           </div>
-          <div class="pworth">${formatMoney(worth)}</div>
+          <div class="pworth">${formatMoney(worth)}<div class="wealth-bar" style="width:${wealthPercent}%"></div></div>
           <div class="pmoney">现金 ${formatMoney(p.money)}${p.debt > 0 ? ` <small class="debt">债 ${formatMoney(p.debt)}</small>` : ''}${deltaHtml}</div>
           <div class="pmeta">
             <span>🏢 ${props}</span><span>🏬 ${houses}</span>
