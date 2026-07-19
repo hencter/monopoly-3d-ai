@@ -1034,16 +1034,8 @@ export class World {
 
       const box = new THREE.Mesh(
         new THREE.BoxGeometry(1.92, TILE_H, 1.92),
-        stdMat('tile_base', {
-          color: TEX.tile_base ? sideTint : sideTint,
-          roughness: 0.82,
-          metalness: 0.08,
-          repeat: 1,
-          offsetX: 0,
-          offsetY: 0,
-        })
+        new THREE.MeshStandardMaterial({ color: sideTint, roughness: 0.82, metalness: 0.08 })
       );
-      if (!TEX.tile_base) box.material.color.setHex(sideTint);
       box.position.set(pos.x, TILE_H / 2, pos.z);
       box.castShadow = box.receiveShadow = true;
       box.userData.tileIndex = i;
