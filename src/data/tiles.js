@@ -90,8 +90,8 @@ export const ITEM_DRAW_WEIGHTS = {
   equalize: 4,
   equalizeDebt: 4,
 };
-/** 单种道具持有上限（防囤积） */
-export const ITEM_STACK_CAP = 6;
+/** 单种道具持有上限（禁止重复） */
+export const ITEM_STACK_CAP = 1;
 /** 手牌总数上限（超出自动挂黑市） */
 export const HAND_CAP = 10;
 /** 黑市参考价（Ŧ万） */
@@ -122,6 +122,8 @@ export const LOTTERY_JACKPOT = P(50);
 export const LOTTERY_WIN_CHANCE = 0.4;
 /** 医院体检费 */
 export const HOSPITAL_FEE = P(30);
+/** 掷骰费用（很贵，加速烧钱） */
+export const DICE_COST = P(5);
 
 export const TILES = [
   { type: 'go',       name: '创业起点' },

@@ -169,6 +169,8 @@ class BrowserAdapter {
     if (p.isAI) {
       this.ui.setTurnInfo(`🤖 ${p.name} 思考中…`);
       await delay(400);
+      // 没钱掷骰就跳过
+      if (p.money < ttc(10)) return { type: 'skip', opSeconds: 0 };
       const landingScores = {};
       for (let k = 1; k <= 6; k++) landingScores[k] = this._scoreLanding(p, (p.position + k) % 40);
       const d = await this.brain.decideRoll(p, landingScores);

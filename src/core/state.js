@@ -14,7 +14,7 @@ import {
   SHARE_PLEDGE_LOAN, NEWS_MIN, NEWS_MAX, NEWS_STEP,
   ITEMS, ITEM_DRAW_WEIGHTS, ITEM_STACK_CAP, HAND_CAP, FREE_DRAWS_PER_TURN, PAID_DRAW_COST,
   PAID_DRAWS_PER_TURN, BUY_LAND_DRAW_CHANCE, GO_DRAW_N, PARKING_DRAW_N,
-  LOTTERY_COST, LOTTERY_JACKPOT, LOTTERY_WIN_CHANCE, HOSPITAL_FEE, ITEM_MARKET_BASE,
+  LOTTERY_COST, LOTTERY_JACKPOT, LOTTERY_WIN_CHANCE, HOSPITAL_FEE, DICE_COST, ITEM_MARKET_BASE,
   ttc, formatMoney, CURRENCY_SYMBOL, CURRENCY_NAME, MONEY_SCALE,
 } from '../data/tiles.js';
 import { CHANCE_CARDS, CHEST_CARDS } from '../data/cards.js';
@@ -31,7 +31,7 @@ export {
   COMPANY_TOTAL_SHARES, COMPANY_IPO_MIN_LEVEL, SHARE_PLEDGE_LOAN,
   ITEMS, ITEM_DRAW_WEIGHTS, ITEM_STACK_CAP, FREE_DRAWS_PER_TURN, PAID_DRAW_COST,
   PAID_DRAWS_PER_TURN, BUY_LAND_DRAW_CHANCE, GO_DRAW_N, PARKING_DRAW_N,
-  LOTTERY_COST, LOTTERY_JACKPOT, LOTTERY_WIN_CHANCE, HOSPITAL_FEE, ITEM_MARKET_BASE, HAND_CAP,
+  LOTTERY_COST, LOTTERY_JACKPOT, LOTTERY_WIN_CHANCE, HOSPITAL_FEE, DICE_COST, ITEM_MARKET_BASE, HAND_CAP,
   ttc, formatMoney, CURRENCY_SYMBOL, CURRENCY_NAME, MONEY_SCALE,
 };
 
@@ -1117,7 +1117,12 @@ export class GameState {
       }
     }
     if (!fine) {
-      if (rng() < 0.35) return { fine: 0, reason: '抽查通过，经营合规' };
+      // IRS 财富税：资产越高税越重
+      const worth = this.netWorth(player);
+      if (worth > ttc(500)) {
+        fine = Math.floor(worth * (0.01 + rng() * 0.03));
+        reason = 'IRS 财富稽查：资产超标，征收累进税';
+      } else if (rng() < 0.35) return { fine: 0, reason: '抽查通过，经营合规' };
       return null;
     }
     return { fine, reason };

@@ -517,6 +517,13 @@ export class UI {
         b.innerHTML = `${ITEMS.rentFree.icon}<span class="cnt">${player.items.rentFree}</span>`;
         bar.appendChild(b);
       }
+      // 跳过按钮：不掷骰不花钱
+      const skipBtn = document.createElement('button');
+      skipBtn.className = 'item-btn skip-btn';
+      skipBtn.title = '跳过回合：不掷骰、不花钱、不前进';
+      skipBtn.innerHTML = '⏭<span class="cnt">跳过</span>';
+      skipBtn.onclick = () => done({ type: 'skip' });
+      bar.appendChild(skipBtn);
     });
   }
 

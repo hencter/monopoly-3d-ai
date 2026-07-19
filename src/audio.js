@@ -139,20 +139,20 @@ class SoundManager {
     const ctx = this._ac();
     if (!ctx || this._bgmTimer || !this.enabled) return;
     const chords = [
-      [261.6, 329.6, 392.0],   // C
-      [220.0, 261.6, 329.6],   // Am
-      [174.6, 220.0, 261.6],   // F
-      [196.0, 246.9, 293.7],   // G
+      [523.2, 659.2, 784.0],   // C (高八度)
+      [440.0, 523.2, 659.2],   // Am
+      [349.2, 440.0, 523.2],   // F
+      [392.0, 493.9, 587.3],   // G
     ];
     let step = 0;
     const playChord = () => {
       if (!this.enabled) return;
       const chord = chords[step++ % chords.length];
-      for (const f of chord) this._tone({ freq: f, dur: 2.2, type: 'sine', vol: 0.16, filterFreq: 900 });
-      this._tone({ freq: chord[0] / 2, dur: 2.2, type: 'triangle', vol: 0.14, filterFreq: 500 });
+      for (const f of chord) this._tone({ freq: f, dur: 1.5, type: 'sine', vol: 0.15, filterFreq: 1200 });
+      this._tone({ freq: chord[0] / 4, dur: 1.5, type: 'triangle', vol: 0.12, filterFreq: 600 });
     };
     playChord();
-    this._bgmTimer = setInterval(playChord, 2000);
+    this._bgmTimer = setInterval(playChord, 1200);
   }
 
   stopBgm() {

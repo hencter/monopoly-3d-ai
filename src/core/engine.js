@@ -3,7 +3,7 @@
 import {
   GameState, TILES, JAIL_FINE, JAIL_INDEX, INDUSTRIES, INDUSTRY_STATES, ITEMS, STOCK_INDUSTRIES,
   formatMoney, ttc, GO_SALARY, GO_DRAW_N, PARKING_DRAW_N, BUY_LAND_DRAW_CHANCE, PAID_DRAW_COST,
-  LOTTERY_COST, LOTTERY_JACKPOT, LOTTERY_WIN_CHANCE, HOSPITAL_FEE,
+  LOTTERY_COST, LOTTERY_JACKPOT, LOTTERY_WIN_CHANCE, HOSPITAL_FEE, DICE_COST,
 } from './state.js';
 
 const MAX_TURNS = 12000; // 34 人局单轮即 34 回合，需更高上限
@@ -131,6 +131,10 @@ export class Engine {
         this.a.log(`🕵️ 监管智能体：${audit.reason}，罚款 <span class="bad">${formatMoney(audit.fine)}</span>`, 'bad');
         const r = this.g.forcePay(p, audit.fine, null);
         this._logForcePay(p, r);
+        // 资金紧张提示借钱
+        if (!r.bankrupt && p.money < ttc(200) && this.g.creditLimit(p) - p.debt >= ttc(100)) {
+          this.a.log(`⚠️ ${this._tag(p)} 现金紧张（${formatMoney(p.money)}），可向银行借款`, 'bad');
+        }
         if (r.bankrupt) { this.a.log(`${this._tag(p)} 被监管罚到破产！`, 'bad'); return; }
       } else {
         this.a.log(`🕵️ 监管智能体：${audit.reason}`, 'good');
@@ -153,6 +157,14 @@ export class Engine {
       this.a.phase('waitRoll', p);
       const action = await this.a.waitRoll(p);
 
+      // 跳过回合（不掷骰不花钱）
+      if (action && action.type === 'skip') {
+        this.a.log(`${this._tag(p)} 跳过回合，休养生息`, 'muted');
+        this.a.phase('endTurn', p);
+        await this._endTurnWithBank(p);
+        return;
+      }
+
       let d1, d2, remote = false, boost = false;
       if (action && action.type === 'remote' && this.g.useItem(p, 'remote')) {
         remote = true;
@@ -161,6 +173,12 @@ export class Engine {
         this.a.log(`${this._tag(p)} 使用 🎯遥控骰子，指定点数 <b>${d1}</b>`, 'good');
         this.a.onItemCast?.(p, 'remote');
       } else {
+        // 掷骰收费
+        if (action && action.type !== 'remote') {
+          const dr = this.g.forcePay(p, DICE_COST, null);
+          if (dr.paid > 0) this.a.log(`${this._tag(p)} 支付掷骰费 ${formatMoney(dr.paid)}`, 'bad');
+          if (dr.bankrupt) { this.a.log(`${this._tag(p)} 付不起掷骰费，破产！`, 'bad'); return; }
+        }
         boost = !!(action && action.boost);
         if (boost && !this.g.useItem(p, 'boost')) boost = false;
         else if (boost) this.a.onItemCast?.(p, 'boost');
@@ -371,10 +389,13 @@ export class Engine {
         break;
       }
       case 'hospital': {
-        this.a.log(`${this._tag(p)} 在综合医院做全身体检（${formatMoney(HOSPITAL_FEE)}）`);
-        const r = this.g.forcePay(p, HOSPITAL_FEE, null);
+        // 按资产比例收费：基础 Ŧ30万 + 净资产的 3%
+        const worth = this.g.netWorth(p);
+        const fee = Math.max(HOSPITAL_FEE, HOSPITAL_FEE + Math.floor(worth * 0.03));
+        this.a.log(`${this._tag(p)} 在综合医院就诊（${formatMoney(fee)}，含资产税）`);
+        const r = this.g.forcePay(p, fee, null);
         this._logForcePay(p, r);
-        if (r.bankrupt) this.a.log(`${this._tag(p)} 连体检费都付不起，破产！`, 'bad');
+        if (r.bankrupt) this.a.log(`${this._tag(p)} 付不起医疗费，破产！`, 'bad');
         break;
       }
       case 'tax': {
