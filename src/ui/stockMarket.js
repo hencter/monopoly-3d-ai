@@ -127,6 +127,15 @@ export function openStockMarket(game, player, onChange, ui = {}, hooks = {}, opt
     banner.textContent = `🛑 股市休市（周${wd}）· 全员轮完 = 过 1 天 · 周一～五开市 · 仅可浏览行情`;
     banner.classList.remove('hidden');
     root.classList.add('market-closed');
+  } else if (tradeable) {
+    const gated = STOCK_INDUSTRIES.filter(k => !game.canTradeStock?.(player, k));
+    const hasStocks = STOCK_INDUSTRIES.some(k => (game.ensureStocks?.(player)?.[k] || player.stocks?.[k] || 0) > 0);
+    if (gated.length === STOCK_INDUSTRIES.length && !hasStocks) {
+      banner.textContent = '⚠️ 你还没有购买任何行业地产，无法买卖股票。请先在棋盘上收购地产（经过可购买地产时选择收购）';
+      banner.classList.remove('hidden');
+    } else {
+      banner.classList.add('hidden');
+    }
   } else {
     banner.classList.add('hidden');
     root.classList.remove('market-closed');
