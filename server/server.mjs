@@ -2,7 +2,7 @@
 // 规则全部在服务端 GameState/Engine 上执行，客户端只做表现与输入转发。
 // 运行：node server/server.mjs （环境变量 PORT 指定端口，默认 8081；DF_FAST=1 加快节奏，供仿真测试用）
 import { WebSocketServer } from 'ws';
-import { GameState, TILES, INDUSTRIES, formatMoney, ttc, GO_SALARY, MONEY_SCALE } from '../src/core/state.js';
+import { GameState, TILES, INDUSTRIES, ITEMS, formatMoney, ttc, GO_SALARY, MONEY_SCALE } from '../src/core/state.js';
 import { Engine } from '../src/core/engine.js';
 import { AIBrain, PERSONAS } from '../src/llm/ai.js';
 
@@ -523,6 +523,36 @@ function handleOp(room, seat, msg) {
     case 'playCard': {
       done = playCard(room, p, msg, err);
       if (!done) return;
+      break;
+    }
+    case 'listCard': {
+      const item = msg.item;
+      const price = Math.max(1, Math.round(Number(msg.price) || ttc(10)));
+      if (!p.pendingListings?.length) return err('没有待定价卡牌');
+      const idx = p.pendingListings.findIndex(it => it === item || !item);
+      if (idx < 0) return err('该卡不在待定价列表');
+      const [target] = p.pendingListings.splice(idx, 1);
+      const id = g.listOnMarket(p, target, price);
+      done = `🏴 ${p.name} 将 ${ITEMS[target]?.icon || '🃏'}${target} 挂上黑市（${formatMoney(price)}）`;
+      room.broadcast({ t: 'marketRefresh' });
+      break;
+    }
+    case 'buyCard': {
+      const listingId = Number(msg.listingId);
+      if (!g.canBuyFromMarket(p, listingId)) return err('无法买入（资金不足/手牌已满/自己不能买自己的）');
+      const r = g.buyFromMarket(p, listingId);
+      if (!r) return err('买入失败');
+      done = `🏴 ${p.name} 从黑市买入 ${ITEMS[r.item]?.icon || '🃏'}${r.item}（${formatMoney(r.price)}）`;
+      room.broadcast({ t: 'marketRefresh' });
+      break;
+    }
+    case 'unlistCard': {
+      const listingId = Number(msg.listingId);
+      if (!g.canUnlist(p, listingId)) return err('无法下架（手牌已满/不是你的挂牌）');
+      const r = g.unlistFromMarket(p, listingId);
+      if (!r) return err('下架失败');
+      done = `🏴 ${p.name} 从黑市下架 ${ITEMS[r.item]?.icon || '🃏'}${r.item}`;
+      room.broadcast({ t: 'marketRefresh' });
       break;
     }
     default:

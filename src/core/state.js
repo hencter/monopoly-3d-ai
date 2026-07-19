@@ -125,7 +125,7 @@ export class GameState {
     // 公告板：{ id, text, icon, industry, mode, expireTurn }
     this.newsBoard = [];
     this._newsSeq = 1;
-    this._candleTime = Math.floor(Date.now() / 1000) - 3600;
+    this._candleTime = Math.floor(Date.now() / 1000) - 7 * 86400;
     this.blackMarket = [];
     this._blackMarketSeq = 0;
     this.chanceDeck = this._shuffle(CHANCE_CARDS.map((c, i) => i));
@@ -300,7 +300,7 @@ export class GameState {
   }
 
   _nextCandleTime() {
-    this._candleTime = (this._candleTime || Math.floor(Date.now() / 1000)) + 60;
+    this._candleTime = (this._candleTime || Math.floor(Date.now() / 1000)) + 86400;
     return this._candleTime;
   }
 
@@ -309,7 +309,7 @@ export class GameState {
     if (!this.kline) this.kline = {};
     if (!this.kline[ind]) this.kline[ind] = [];
     let price = this.stockPrice(ind);
-    const baseT = Math.floor(Date.now() / 1000) - bars * 60;
+    const baseT = Math.floor(Date.now() / 1000) - bars * 86400;
     this.kline[ind] = [];
     for (let i = 0; i < bars; i++) {
       const open = price;
@@ -320,7 +320,7 @@ export class GameState {
       const hi = Math.max(open, close) * (1 + this.rng() * 0.02);
       const lo = Math.min(open, close) * (1 - this.rng() * 0.02);
       this.kline[ind].push({
-        time: baseT + i * 60,
+        time: baseT + i * 86400,
         open: +open.toFixed(2),
         high: +hi.toFixed(2),
         low: +Math.max(0.5, lo).toFixed(2),
@@ -328,7 +328,7 @@ export class GameState {
       });
       price = close;
     }
-    this._candleTime = baseT + bars * 60;
+    this._candleTime = baseT + bars * 86400;
   }
 
   /** 追加一根 K 线；close 缺省取当前 stockPrice */

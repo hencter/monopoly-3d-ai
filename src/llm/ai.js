@@ -1,4 +1,4 @@
-import { formatMoney } from '../data/currency.js';
+import { ttc, formatMoney } from '../data/currency.js';
 // AI 人格大脑：DeepSeek 驱动决策/谈判/闲聊；无 Key 或调用失败时回退本地启发式
 import { TILES, INDUSTRIES, INDUSTRY_STATES } from '../data/tiles.js';
 
@@ -434,6 +434,39 @@ none。
         break;
       }
     }
+    // 启发式出牌
+    const rng = g.rng;
+    const items = player.items || {};
+    const ops = g.players.filter(o => o.id !== player.id && !o.bankrupt);
+    if (items.subsidy > 0 && rng() < 0.9) actions.push({ op: 'playCard', item: 'subsidy' });
+    if (items.debtCut > 0 && player.debt > ttc(100) && rng() < 0.8) actions.push({ op: 'playCard', item: 'debtCut' });
+    if (items.bail > 0 && player.inJail && rng() < 0.95) actions.push({ op: 'playCard', item: 'bail' });
+    if (items.hedge > 0 && rng() < 0.6) actions.push({ op: 'playCard', item: 'hedge' });
+    if (items.rush > 0 && rng() < 0.7) actions.push({ op: 'playCard', item: 'rush' });
+    if (items.doubleGo > 0 && rng() < 0.7) actions.push({ op: 'playCard', item: 'doubleGo' });
+    if (items.rob > 0 && ops.length && rng() < 0.5) {
+      const richest = ops.sort((a, b) => b.money - a.money)[0];
+      if (richest) actions.push({ op: 'playCard', item: 'rob', targetId: richest.id });
+    }
+    if (items.hibernate > 0 && ops.length && rng() < 0.4) {
+      const lead = ops.sort((a, b) => g.netWorth(b) - g.netWorth(a))[0];
+      if (lead) actions.push({ op: 'playCard', item: 'hibernate', targetId: lead.id });
+    }
+    if (items.demolish > 0 && rng() < 0.5) {
+      let best = -1, bestRent = 0;
+      for (const o of ops) {
+        for (const i of g.playerProperties(o.id)) {
+          if (g.houses[i] > 0 && g.calcRent(i) > bestRent) { bestRent = g.calcRent(i); best = i; }
+        }
+      }
+      if (best >= 0) actions.push({ op: 'playCard', item: 'demolish', tileIdx: best });
+    }
+    if (items.freeze > 0 && ops.length && rng() < 0.35) {
+      const lead = ops.sort((a, b) => g.netWorth(b) - g.netWorth(a))[0];
+      if (lead) actions.push({ op: 'playCard', item: 'freeze', targetId: lead.id });
+    }
+    if (items.equalizeDebt > 0 && player.debt > ttc(300) && rng() < 0.4) actions.push({ op: 'playCard', item: 'equalizeDebt' });
+    if (items.equalize > 0 && player.money < g.alivePlayers().reduce((s, p) => s + p.money, 0) / g.alivePlayers().length && rng() < 0.3) actions.push({ op: 'playCard', item: 'equalize' });
     return actions.slice(0, 5);
   }
 }

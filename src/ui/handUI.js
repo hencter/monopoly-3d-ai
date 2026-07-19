@@ -19,6 +19,13 @@ const CARD_IMG = {
   swap: '/textures/cards/swap.png',
   hibernate: '/textures/cards/hibernate.png',
   intel: '/textures/cards/intel.png',
+  bail: '/textures/cards/bail.png',
+  subsidy: '/textures/cards/subsidy.png',
+  debtCut: '/textures/cards/debtCut.png',
+  audit: '/textures/cards/audit.png',
+  hedge: '/textures/cards/hedge.png',
+  rush: '/textures/cards/rush.png',
+  freeze: '/textures/cards/freeze.png',
 };
 
 function ensureRoot() {

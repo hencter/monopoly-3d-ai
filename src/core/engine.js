@@ -2,7 +2,7 @@
 // 因此同一引擎既可用于浏览器（Three.js + DOM + DeepSeek），也可用于无头仿真测试。
 import {
   GameState, TILES, JAIL_FINE, JAIL_INDEX, INDUSTRIES, INDUSTRY_STATES, ITEMS,
-  formatMoney, GO_SALARY, GO_DRAW_N, PARKING_DRAW_N, BUY_LAND_DRAW_CHANCE, PAID_DRAW_COST,
+  formatMoney, ttc, GO_SALARY, GO_DRAW_N, PARKING_DRAW_N, BUY_LAND_DRAW_CHANCE, PAID_DRAW_COST,
   LOTTERY_COST, LOTTERY_JACKPOT, LOTTERY_WIN_CHANCE, HOSPITAL_FEE,
 } from './state.js';
 
@@ -471,7 +471,7 @@ export class Engine {
       this.a.log(`${this._tag(p)} 全部身家 ${formatMoney(r.paid)} 赔给 ${this._tag(owner)}，破产出局！`, 'bad');
     } else {
       this.a.log(`${this._tag(p)} 支付 ${formatMoney(r.paid)} 给 ${this._tag(owner)}`);
-      if (r.paid >= 150) this.a.onEvent?.(p, 'rent', { rent: r.paid });
+      if (r.paid >= ttc(150)) this.a.onEvent?.(p, 'rent', { rent: r.paid });
     }
   }
 

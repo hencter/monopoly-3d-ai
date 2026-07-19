@@ -1411,6 +1411,8 @@ export class UI {
     const canIpo = game.canIPO(player);
     const canPledge = game.canPledgeShares(player, 5);
     const canUnpledge = (c.pledged || 0) > 0;
+    const sellable = game.founderSellableShares?.(player) || 0;
+    const hasTargets = game.players.some(o => o.id !== player.id && !o.bankrupt && o.money >= unit);
 
     this.el.modal?.classList.add('company-fs');
     this._openModal(`
@@ -1535,6 +1537,11 @@ export class UI {
             <p class="muted co-ops-tip">
               他人可通过「入股」买入你的股份（公允价即时成交）。监管智能体可能抽查高杠杆与 IPO 控制权。
             </p>
+            ${sellable > 0 ? `
+              <button type="button" class="co-act" data-private ${!hasTargets ? 'disabled' : ''} style="background:linear-gradient(135deg,#2a5a3a,#1a3a2a);border-color:#4a8">
+                <div class="t">🤝 私募融资</div>
+                <div class="d">可卖出 <b>${sellable}</b> 股 · 公允价 ${formatMoney(unit)}/股 · 定向寻找投资者</div>
+              </button>` : ''}
           </div>
         </div>
 
@@ -1573,6 +1580,27 @@ export class UI {
       const r = game.unpledgeShares(player, n);
       if (!r) { this.toast('赎回失败（现金不足或无质押）'); return; }
       this.log(`${player.name} 赎回质押股 ${r.n} 手（${formatMoney(r.cost)}）`, 'good');
+      onChange(); render();
+    });
+    bind('[data-private]', async () => {
+      const targets = game.players.filter(o => o.id !== player.id && !o.bankrupt && o.money >= unit);
+      if (!targets.length) { this.toast('没有玩家买得起'); return; }
+      const tid = await this.askPlayer('🤝 私募融资 · 选择投资者', targets);
+      if (tid == null) return;
+      const t = game.players[tid];
+      const maxN = Math.min(sellable, Math.floor(t.money / unit));
+      if (maxN <= 0) { this.toast('对方资金不足'); return; }
+      const nOpts = [1, 2, 5, 10].filter(n => n <= maxN);
+      if (maxN > 0 && !nOpts.includes(maxN)) nOpts.push(maxN);
+      const n = await this.openPickOverlay({
+        title: `私募 · 出售给 ${t.name}`,
+        sub: `价格 ${formatMoney(unit)}/股 · 对方现金 ${formatMoney(t.money)}`,
+        options: nOpts.map(v => ({ id: v, label: `${v} 股`, meta: `共 ${formatMoney(unit * v)}` })),
+      });
+      if (n == null) return;
+      const r = game.investCompany?.(t, player, +n, false);
+      if (!r) { this.toast('交易失败'); return; }
+      this.log(`${player.name} 私募出售 ${r.n} 股给 ${t.name}（${formatMoney(r.cost)}）`, 'good');
       onChange(); render();
     });
     bind('[data-close]', () => {
