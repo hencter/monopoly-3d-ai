@@ -99,7 +99,14 @@ export function openStockMarket(game, player, onChange, ui = {}, hooks = {}, opt
       return;
     }
     if (tradeable) {
-      cashEl.textContent = `现金 ${formatMoney(player?.money || 0)} · ${wd}开市 · 可交易`;
+      const gated = STOCK_INDUSTRIES.filter(k => !game.canTradeStock?.(player, k));
+      const allGated = gated.length === STOCK_INDUSTRIES.length;
+      const hasStocks = STOCK_INDUSTRIES.some(k => (game.ensureStocks?.(player)?.[k] || player.stocks?.[k] || 0) > 0);
+      if (allGated && !hasStocks) {
+        cashEl.textContent = `⚠️ 需先购买任一行业地产才能买卖 · 现金 ${formatMoney(player?.money || 0)} · ${wd}开市`;
+      } else {
+        cashEl.textContent = `现金 ${formatMoney(player?.money || 0)} · ${wd}开市 · 可交易`;
+      }
     } else {
       const name = player?.name ? `${player.name} · ` : '';
       cashEl.textContent = `👁 观战行情 · ${name}参考现金 ${formatMoney(player?.money || 0)} · 不可买卖`;

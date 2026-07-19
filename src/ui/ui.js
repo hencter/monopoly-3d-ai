@@ -1003,6 +1003,18 @@ export class UI {
     this._openModal(`<div class="card-display"><div class="card-icon">🤖</div><h2>${name} 思考中…</h2><div class="modal-body"><span class="muted">正在调用大模型决策</span></div></div>`);
   }
 
+  /** 简单确认弹窗，返回 true/false */
+  confirmAction(message, yesLabel = '确认', noLabel = '取消') {
+    this._openModal(`
+      <h2>🤝 确认操作</h2>
+      <div class="modal-body"><p>${message}</p></div>
+      <div class="btn-row">
+        <button class="primary" data-choice="yes">${yesLabel}</button>
+        <button data-choice="no">${noLabel}</button>
+      </div>`);
+    return this._modalButtons().then(c => c === 'yes');
+  }
+
   // ---------- 决策弹窗 ----------
   promptBuy(player, tileIdx, game) {
     const t = TILES[tileIdx];
@@ -1598,6 +1610,14 @@ export class UI {
         options: nOpts.map(v => ({ id: v, label: `${v} 股`, meta: `共 ${formatMoney(unit * v)}` })),
       });
       if (n == null) return;
+      // 目标方同意确认
+      if (!t.isAI) {
+        const ok = await this.confirmAction(
+          `🤝 ${player.name} 想向你私募出售 ${n} 股（每股 ${formatMoney(unit)}，共 ${formatMoney(unit * n)}）`,
+          '接受', '拒绝'
+        );
+        if (!ok) return;
+      }
       const r = game.investCompany?.(t, player, +n, false);
       if (!r) { this.toast('交易失败'); return; }
       this.log(`${player.name} 私募出售 ${r.n} 股给 ${t.name}（${formatMoney(r.cost)}）`, 'good');

@@ -218,12 +218,21 @@ export function openInvestMarket(game, me, onChange, ui = {}, hooks = {}, opts =
         };
       });
 
-      const doInvest = (fromFloat) => {
+      const doInvest = async (fromFloat) => {
         let n = clampQty(parseInt(card.dataset.qty, 10) || 1);
         n = Math.min(n, fromFloat ? maxFloat : maxPriv);
         if (n <= 0) {
           ui.toast?.(fromFloat ? '公众池不足或现金不够' : '无法入股');
           return;
+        }
+        // 入股私人股需要创始人同意
+        if (!fromFloat && !f.isAI) {
+          const unit = game.companySharePrice(f);
+          const ok = await ui.confirmAction?.(
+            `${me.name} 想入股你公司 ${n} 股（每股 ${formatMoney(unit)}，共 ${formatMoney(unit * n)}）`,
+            '同意', '拒绝'
+          );
+          if (!ok) return;
         }
         if (hooks.invest) {
           hooks.invest(f.id, n, fromFloat);
